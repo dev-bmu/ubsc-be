@@ -1,0 +1,37 @@
+# ===== Normalisasi akhir baris =====
+# Windows (dev) -> Linux (VPS). Semua teks disimpan LF di repo dan di working tree.
+* text=auto eol=lf
+
+# Script deploy wajib LF apa pun setting git lokal developer.
+*.sh text eol=lf
+
+# ===== Lockfile =====
+# R17: package-lock.json WAJIB di-commit (tanpa itu `npm ci` mustahil dan build
+# jadi non-deterministik). Yang ditandai di sini hanya agar tidak mengotori diff
+# review dan statistik bahasa GitHub - bukan agar diabaikan.
+package-lock.json linguist-generated=true
+
+# ===== Berkas biner =====
+# Jangan pernah dinormalisasi EOL-nya; satu byte berubah = berkas rusak.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.avif binary
+*.ico binary
+*.pdf binary
+
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+
+*.mp4 binary
+*.webm binary
+*.mov binary
+*.m4v binary
+
+*.zip binary
+*.gz binary

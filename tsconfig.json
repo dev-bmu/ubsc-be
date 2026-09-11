@@ -1,0 +1,25 @@
+{
+  // ===== Kompilasi ubsc-api =====
+  // rootDir "." disengaja: folder shared/ (sumber kebenaran kontrak antar repo)
+  // harus ikut di-typecheck, dan itu mustahil bila rootDir dikunci ke src/.
+  // Konsekuensinya entrypoint hasil build ada di dist/src/app.js, bukan dist/app.js.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "rootDir": ".",
+    "outDir": "dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    // Windows -> Linux: casing import yang tidak konsisten lolos di dev, gagal di server.
+    "forceConsistentCasingInFileNames": true,
+    // Stack trace produksi menunjuk ke .ts bila proses dijalankan dengan --enable-source-maps.
+    "sourceMap": true
+  },
+  // tests/ sengaja di luar project: kalau ikut, hasilnya ter-emit ke dist/tests
+  // dan ikut terbawa ke server. Type-checking test dilakukan ts-jest saat run.
+  "include": ["src", "shared", "scripts", "prisma"],
+  "exclude": ["node_modules", "dist", "tests"]
+}

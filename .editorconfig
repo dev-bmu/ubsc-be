@@ -1,0 +1,17 @@
+# ===== EditorConfig - ubsc-api =====
+# Repo ini ditulis di Windows dan dijalankan di Linux (VPS). Tanpa end_of_line=lf,
+# ops/scripts/*.sh tiba di server dengan CRLF dan gagal dengan pesan yang menyesatkan:
+# "bad interpreter: /bin/bash^M". Berpasangan dengan .gitattributes.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Markdown memakai dua spasi di akhir baris sebagai line break; jangan dipangkas.
+[*.md]
+trim_trailing_whitespace = false

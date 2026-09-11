@@ -1,0 +1,158 @@
+// ============================================================================
+// === UBSC — SKEMA PRISMA FASE 0 (skeleton) ===
+// ============================================================================
+// Isi file ini SENGAJA minimal: hanya tabel yang dibutuhkan supaya API bisa
+// boot, di-seed, dan melayani login dua audience (customer + staff).
+// Ini BUKAN skema final.
+//
+// Fase 1 menambahkan ~25 tabel domain di atas fondasi yang sama: Facility,
+// FacilityCategory, FacilityUnit, FacilityPrice, BookingSchedule, Booking,
+// Membership, MembershipPlan, MembershipHistory, Transaction, Review, Media,
+// News, NewsCategory, PromoCarousel, SponsorLogo, Reel, Testimonial,
+// InfoBanner, SystemSetting, NotificationState, EmailLog, dan tabel token.
+//
+// Keputusan struktural yang SUDAH dikunci di sini supaya Fase 1 tinggal
+// MENAMBAH, bukan membongkar:
+//
+//  1. relationMode = "prisma" -> tidak ada FK maupun cascade di level DB.
+//     Konsekuensinya (R2): setiap FK wajib punya @@index MANUAL, setiap aksi
+//     hapus di admin harus restrict + mengecek dependent, dan seeder maupun
+//     script import wajib lewat Prisma — tidak pernah raw SQL.
+//  2. Dimensi divisionId pada RolePermission DIBUANG. @@unique bertiga
+//     [roleName, divisionId, permissionId] tidak enforceable di MySQL karena
+//     NULL dianggap distinct, sehingga baris global bisa duplikat tanpa batas
+//     (bug 7). Penggantinya @@unique([roleName, permissionId]) yang benar-benar
+//     ditegakkan indeks.
+//  3. Cluster / Unit / Division dari boilerplate DIBUANG seluruhnya — UBSC
+//     tidak punya struktur organisasi itu.
+//  4. User.roleId NULLABLE: customer tidak punya role staff.
+//  5. RefreshToken.audience memisahkan sesi customer dari sesi staff (R4).
+//
+// YANG WAJIB DIPUTUSKAN DI DRAFT SKEMA FASE 1 — jangan sampai terlewat:
+//
+//  - Transaction.receiptSequence Int @unique @default(autoincrement())
+//    berdampingan dengan PK uuid (R3). Nomor kuitansi ('UBSC-' + 6 digit)
+//    dibaca finance dari rekening koran setiap hari; MySQL mengizinkan
+//    auto-increment non-PK asalkan kolomnya menjadi kolom pertama sebuah key,
+//    dan @unique memenuhi syarat itu. Retrofit setelah ada transaksi berarti
+//    backfill — putuskan di draft, bukan belakangan.
+//  - PasswordResetToken & EmailVerificationToken mengikuti bentuk RefreshToken
+//    (tokenHash @unique, expiresAt, usedAt, userId).
+//  - Kolom domain customer pada User (lihat TODO di model User), termasuk
+//    password menjadi NULLABLE untuk akun yang hanya punya Google OAuth.
+//  - Denormalisasi Booking.startsAt / Booking.endsAt + @@index([endsAt])
+//    (bug 11: CONCAT() Laravel tidak bisa di-index).
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider     = "mysql"
+  relationMode = "prisma"
+}
+
+// ============================================================================
+// === RBAC (granular, tanpa dimensi divisi) ===
+// ============================================================================
+
+model Permission {
+  id          String           @id @default(uuid())
+  code        String           @unique
+  name        String
+  description String?
+  roles       RolePermission[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleName     String
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  // Tanpa divisionId, kombinasi ini benar-benar ditegakkan indeks (bug 7).
+  @@unique([roleName, permissionId])
+  // Lookup by roleName sudah tercakup prefix kiri @@unique di atas, jadi yang
+  // perlu ditambah manual hanya index FK-nya (relationMode "prisma").
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model Role {
+  id    String @id @default(uuid())
+  name  String @unique
+  users User[]
+
+  @@map("roles")
+}
+
+// ============================================================================
+// === USER (satu tabel untuk customer dan staff) ===
+// ============================================================================
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  password     String // hash bcrypt
+  name         String
+  failedLogins Int      @default(0)
+  isLocked     Boolean  @default(false)
+  // NULL = akun customer. Hanya akun staff yang punya role.
+  roleId       String?
+  role         Role?    @relation(fields: [roleId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
+
+  // TODO Fase 1: kolom domain customer dari tabel users Laravel —
+  //   phone String? @db.VarChar(20)
+  //   category UserCategory?              (enum: umum | warga_kampus)
+  //   identityNumber String? @db.VarChar(50)
+  //   identityFilePath String?            (disimpan di storage/private/identity)
+  //   identityStatus IdentityStatus @default(unverified)
+  //   emailVerifiedAt DateTime?
+  //   googleId String? @unique
+  //   avatar String?
+  // Sekalian: password menjadi NULLABLE (akun hasil Google OAuth tidak punya
+  // password lokal) dan relasi bookings / memberships / transactions / reviews.
+  @@index([roleId])
+  @@map("users")
+}
+
+// ============================================================================
+// === SESSION (refresh token rotation + reuse detection, per audience) ===
+// ============================================================================
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  // 'customer' | 'staff'. Refresh WAJIB mencocokkan kolom ini (R4): cookie
+  // customer yang diputar ulang tidak boleh mencetak access token staff.
+  audience   String
+  familyId   String? // stabil lintas rotasi: menandai satu sesi login/device
+  ipAddress  String?
+  userAgent  String?  @db.Text
+  revoked    Boolean  @default(false)
+  replacedBy String? // id token pengganti (untuk reuse detection)
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  lastUsedAt DateTime @default(now())
+
+  // onDelete Cascade di sini diemulasi Prisma di sisi client, bukan oleh DB
+  // (relationMode "prisma"). Menghapus user lewat raw SQL akan meninggalkan
+  // orphan — itulah sebabnya raw DELETE dilarang (R2).
+  @@index([userId])
+  @@index([familyId])
+  @@index([audience])
+  @@map("refresh_tokens")
+}

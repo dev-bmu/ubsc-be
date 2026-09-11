@@ -1,0 +1,47 @@
+# ===== Dependency =====
+node_modules/
+
+# CATATAN R17: package-lock.json SENGAJA TIDAK diabaikan di sini.
+# .gitignore boilerplate FE mengabaikannya, dan menyalin kebiasaan itu berarti
+# `npm ci` mustahil dan build tidak deterministik - tepat kondisi yang menyembunyikan
+# masalah versi sampai produksi. Lockfile wajib ikut di-commit.
+
+# ===== Hasil build =====
+dist/
+*.tsbuildinfo
+coverage/
+
+# ===== Environment =====
+# Hanya .env.example yang boleh masuk repo.
+.env
+.env.local
+.env.*.local
+
+# ===== Log =====
+# Isinya diabaikan, foldernya dipertahankan lewat .gitkeep (winston butuh folder
+# ini sudah ada saat boot).
+logs/*
+!logs/.gitkeep
+*.log
+
+# ===== Upload publik =====
+# Disajikan express.static('/uploads'). Isinya milik user, bukan milik repo.
+uploads/*
+!uploads/.gitkeep
+
+# ===== Storage privat =====
+# Bukti bayar & dokumen identitas - tidak pernah di-mount ke web, tidak pernah
+# masuk git. Pola ditulis tiga baris karena git tidak menelusuri direktori yang
+# sudah diabaikan: tanpa baris tengah, negasi .gitkeep di dalamnya tidak pernah
+# terbaca dan struktur foldernya hilang saat clone.
+storage/private/**
+!storage/private/**/
+!storage/private/**/.gitkeep
+
+# ===== Preview email dev =====
+# MAIL_TRANSPORT=log menulis .eml ke sini, bukan mengirim SMTP.
+storage/mail-preview/
+
+# ===== OS & editor =====
+.DS_Store
+Thumbs.db

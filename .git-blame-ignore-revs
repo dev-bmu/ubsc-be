@@ -1,0 +1,32 @@
+# .git-blame-ignore-revs — ubsc-api
+#
+# Daftar commit yang harus DIABAIKAN oleh git blame.
+#
+# Gunanya: commit reformat Prettier berskala besar menyentuh hampir setiap baris di repo
+# tanpa mengubah satu pun perilaku. Tanpa berkas ini, `git blame` pada berkas apa pun akan
+# menunjuk ke commit reformat itu, dan riwayat sebenarnya — siapa menulis logika apa, kapan,
+# dan kenapa — tertutup seluruhnya.
+#
+# Cara memakai (sekali per clone, karena ini konfigurasi lokal dan tidak ikut ter-commit):
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Setelah itu `git blame` dan `git log -L` otomatis melewati commit di bawah.
+# GitHub dan GitLab membaca berkas ini sendiri tanpa konfigurasi tambahan.
+#
+# Aturan isi:
+# - Satu SHA penuh 40 karakter per baris. SHA pendek DITOLAK dan membuat blame gagal
+#   dengan "fatal: object is not a commit" pada sebagian versi git.
+# - Hanya commit yang murni reformat atau rename massal. Kalau sebuah commit mengubah
+#   perilaku sekecil apa pun, jangan masukkan ke sini.
+# - Beri komentar di atas setiap SHA: apa yang diformat dan kapan.
+#
+# ===== Commit yang diabaikan =====
+
+# Belum ada. Reformat Prettier Fase 0 dan normalisasi EOL ke LF terjadi SEBELUM repo ini
+# di-init, sehingga keduanya ikut ke dalam commit pertama. Commit pertama adalah baseline
+# riwayat — tidak ada blame yang bisa ia tutupi, jadi tidak ada yang perlu diabaikan.
+#
+# Reformat massal BERIKUTNYA (mis. ganti printWidth, upgrade prettier-plugin-tailwindcss
+# yang mengurutkan ulang class Tailwind) wajib dibuat sebagai commit tersendiri yang tidak
+# mengubah perilaku apa pun, lalu SHA 40 karakternya ditambahkan di bawah ini.
