@@ -17,6 +17,10 @@ export const ERROR_CODES = {
   RATE_LIMITED: 'RATE_LIMITED',
   PAYLOAD_TOO_LARGE: 'PAYLOAD_TOO_LARGE',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+  // Dibedakan dari INTERNAL_ERROR supaya FE bisa memisahkan "coba lagi nanti"
+  // dari "ada bug". Dipakai /api/health/deep saat DB tidak terjangkau dan
+  // jalur Google OAuth saat kredensialnya belum dikonfigurasi.
+  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
   // Dipakai domain nanti — didaftarkan sekarang supaya FE bisa menyiapkan penanganannya lebih awal
   // TODO Fase 3: HOLD_LAPSED dilempar saat bukti bayar masuk setelah holdExpiresAt lewat
   HOLD_LAPSED: 'HOLD_LAPSED',
@@ -83,6 +87,12 @@ export const errorCodeForStatus = (status: number): ApiErrorCode => {
       return ERROR_CODES.PAYLOAD_TOO_LARGE
     case 429:
       return ERROR_CODES.RATE_LIMITED
+    case 502:
+    case 503:
+    case 504:
+      // Dependensi di luar proses ini yang bermasalah (DB, SMTP, Google), bukan
+      // kode kita — FE boleh menawarkan "coba lagi" alih-alih menyerah.
+      return ERROR_CODES.SERVICE_UNAVAILABLE
     default:
       // 4xx lain (402, 410, 415, ...) diperlakukan sebagai penolakan input supaya FE punya satu jalur penanganan;
       // 5xx apa pun selalu INTERNAL_ERROR.
@@ -115,10 +125,15 @@ export const paginationMeta = (page: number, perPage: number, total: number): Ap
   }
 }
 
-/** Balasan sukses. `meta` hanya ikut terkirim bila memang diberikan (endpoint non-list tidak punya meta). */
-export const ok = <T>(res: Response, data: T, meta?: ApiMeta): Response => {
+/**
+ * Balasan sukses. `meta` hanya ikut terkirim bila memang diberikan (endpoint non-list tidak punya meta).
+ *
+ * `status` default 200. Oper 201 pada endpoint yang benar-benar membuat resource baru
+ * (register, store) — bentuk body-nya tetap sama, hanya kode statusnya yang berbeda.
+ */
+export const ok = <T>(res: Response, data: T, meta?: ApiMeta, status = 200): Response => {
   const body: ApiSuccessBody<T> = meta ? { success: true, data, meta } : { success: true, data }
-  return res.json(body)
+  return res.status(status).json(body)
 }
 
 /**

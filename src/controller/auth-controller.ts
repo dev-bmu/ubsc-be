@@ -1,8 +1,12 @@
 import { Request, RequestHandler } from 'express'
 import { forceLogoutAll, getActiveSessions, getRefreshCookieName, loginAuth, logoutAuth, refreshAuth, revokeSession } from '../services/auth-services'
+import { forgotPasswordAuth, registerAuth, resendVerificationAuth, resetPasswordAuth, verifyEmailAuth } from '../services/registration-services'
+import { googleCallback, googleRedirect, STATE_COOKIE } from '../services/google-services'
+import { LANDING_URL } from '../config'
 import { ResponseError } from '../error/response-error'
 import { UserRequest } from '../type/user-request'
 import { TokenAudience } from '../utils/jwt'
+import { logger } from '../utils/logger'
 import { ok } from '../utils/respond'
 
 // ===== Controller auth =====
@@ -87,6 +91,82 @@ export const forceLogout =
     }
   }
 
-// TODO Fase 1: register, verifyEmail, resendVerification, forgotPassword,
-// resetPassword, googleRedirect, googleCallback — semuanya audience 'customer'
-// saja. Akun staff dibuat lewat panel admin (Fase 8), tidak mendaftar sendiri.
+// ===== Pendaftaran & pemulihan akun (audience customer saja) =====
+// Akun staff dibuat lewat panel admin (Fase 8), tidak pernah mendaftar sendiri
+// — karena itu handler di bawah ini BUKAN factory beraudience.
+
+export const register: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await registerAuth(req.body, clientIp(req), req.headers['user-agent'] ?? null, res), undefined, 201)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const verifyEmail: RequestHandler = async (req, res, next) => {
+  try {
+    // Token diterima lewat body, bukan path: token di URL ikut tercatat di log
+    // akses nginx, riwayat browser, dan header Referer ke pihak ketiga.
+    // Halaman /verifikasi-email di landing membaca ?token= lalu mem-POST-nya.
+    ok(res, await verifyEmailAuth(req.body))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const resendVerification: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await resendVerificationAuth(req.body))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const forgotPassword: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await forgotPasswordAuth(req.body))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const resetPassword: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await resetPasswordAuth(req.body))
+  } catch (error) {
+    next(error)
+  }
+}
+
+// ===== Google OAuth =====
+
+export const googleStart: RequestHandler = async (req, res, next) => {
+  try {
+    // 302 ke Google, bukan envelope JSON: ini navigasi browser sungguhan.
+    res.redirect(googleRedirect(res))
+  } catch (error) {
+    next(error)
+  }
+}
+
+// next tidak dipakai: kegagalan di sini ditangani sendiri sebagai redirect,
+// tidak diteruskan ke errorMiddleware yang akan membalas JSON.
+export const googleFinish: RequestHandler = async (req, res, _next) => {
+  try {
+    const state = (req.cookies as Record<string, string | undefined>)[STATE_COOKIE]
+    await googleCallback(req.query as { code?: string; state?: string; error?: string }, state, clientIp(req), req.headers['user-agent'] ?? null, res)
+
+    // Sesi sudah terpasang di cookie. Balikkan browser ke landing — access
+    // token tidak bisa dititipkan lewat URL (ia akan tercatat di log akses dan
+    // riwayat browser), jadi landing memanggil /auth/customer/refresh untuk
+    // mengambilnya dari cookie yang baru saja dipasang.
+    res.redirect(`${LANDING_URL}/?auth=google-success`)
+  } catch (error) {
+    // Kegagalan OAuth juga navigasi browser, bukan pemanggilan fetch — user
+    // tidak boleh mendarat di halaman JSON. Kirim kodenya lewat query supaya
+    // landing memunculkan FlashToast yang sesuai.
+    const code = error instanceof ResponseError ? error.code : 'INTERNAL_ERROR'
+    logger.warn(`Google OAuth gagal: ${(error as Error).message}`)
+    res.redirect(`${LANDING_URL}/?auth=google-error&code=${encodeURIComponent(code)}`)
+  }
+}

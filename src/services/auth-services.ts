@@ -163,7 +163,12 @@ export const loginAuth = async (request: unknown, audience: TokenAudience, ipAdd
   if (!user) throw new ResponseError(401, 'Email atau password salah', 'UNAUTHENTICATED')
   if (user.isLocked) throw new ResponseError(403, 'Akun terkunci. Hubungi administrator.', 'FORBIDDEN')
 
-  if (!bcrypt.compareSync(validated.password, user.password)) {
+  // password NULL = akun yang hanya punya Google OAuth dan belum pernah
+  // menetapkan password lokal. Perlakukan seperti password salah — TANPA
+  // memanggil bcrypt dengan null — supaya tidak membocorkan cara akun itu
+  // dibuat. Jalur keluarnya adalah "lupa password", yang menetapkan password
+  // lokal untuk akun itu.
+  if (!user.password || !bcrypt.compareSync(validated.password, user.password)) {
     const failedLogins = user.failedLogins + 1
     await prismaClient.user.update({ where: { id: user.id }, data: { failedLogins, isLocked: failedLogins >= MAX_FAILED_LOGINS } })
     throw new ResponseError(401, 'Email atau password salah', 'UNAUTHENTICATED')
@@ -177,6 +182,39 @@ export const loginAuth = async (request: unknown, audience: TokenAudience, ipAdd
     await prismaClient.user.update({ where: { id: user.id }, data: { failedLogins: 0 } })
   }
 
+  return issueSession(user, audience, ipAddress, userAgent, res, 'Login')
+}
+
+/**
+ * Terbitkan sesi customer. Dipakai registration-services (register) dan
+ * google-services (callback) supaya keduanya menghasilkan sesi yang identik
+ * bentuknya dengan hasil login biasa. Sengaja dikunci ke audience 'customer':
+ * tidak ada satu pun jalur pendaftaran mandiri yang boleh mencetak sesi staff.
+ */
+export async function issueCustomerSession(
+  user: UserWithRelations,
+  ipAddress: string | null,
+  userAgent: string | null,
+  res: Response,
+  reason: string
+) {
+  return issueSession(user, 'customer', ipAddress, userAgent, res, reason)
+}
+
+/**
+ * Terbitkan sesi baru: pangkas sesi lama, cetak access token, simpan refresh
+ * token, pasang cookie. Dipakai loginAuth, registerAuth, dan googleCallback —
+ * ketiganya harus menghasilkan sesi yang identik bentuknya, dan menduplikasi
+ * blok ini adalah cara yang rapi untuk membuat salah satunya diam-diam berbeda.
+ */
+async function issueSession(
+  user: UserWithRelations,
+  audience: TokenAudience,
+  ipAddress: string | null,
+  userAgent: string | null,
+  res: Response,
+  reason: string
+) {
   await pruneAndEnforce(user.id, audience)
 
   const permissions = user.role ? await getPermissionsByRole(user.role.name) : []
@@ -197,7 +235,7 @@ export const loginAuth = async (request: unknown, audience: TokenAudience, ipAdd
 
   res.cookie(COOKIES[audience].refresh, refreshPlain, refreshCookieOptions())
   setSessionCookies(res, user, permissions, audience)
-  logger.info(`Login sukses (${audience}): ${user.email}`)
+  logger.info(`${reason} sukses (${audience}): ${user.email}`)
 
   return { accessToken, user: publicUser(user, permissions) }
 }

@@ -1,47 +1,62 @@
 // ============================================================================
-// === UBSC — SKEMA PRISMA FASE 0 (skeleton) ===
+// === UBSC — SKEMA PRISMA FASE 1 (lengkap) ===
 // ============================================================================
-// Isi file ini SENGAJA minimal: hanya tabel yang dibutuhkan supaya API bisa
-// boot, di-seed, dan melayani login dua audience (customer + staff).
-// Ini BUKAN skema final.
+// Port dari MySQL Laravel (55 migration, 23 tabel domain) ke Prisma 7.
+// Sumber kebenaran saat porting: DDL hasil `mysqldump --no-data` dari database
+// `ubsc` yang sudah ter-migrate penuh — bukan pembacaan ulang file migration.
 //
-// Fase 1 menambahkan ~25 tabel domain di atas fondasi yang sama: Facility,
-// FacilityCategory, FacilityUnit, FacilityPrice, BookingSchedule, Booking,
-// Membership, MembershipPlan, MembershipHistory, Transaction, Review, Media,
-// News, NewsCategory, PromoCarousel, SponsorLogo, Reel, Testimonial,
-// InfoBanner, SystemSetting, NotificationState, EmailLog, dan tabel token.
+// KONVENSI (dari boilerplate STARTER-BMU, wajib):
+//   String @id @default(uuid()) · model PascalCase singular · @@map snake_case
+//   plural · field camelCase · relationMode "prisma" -> @@index MANUAL di
+//   setiap FK.
 //
-// Keputusan struktural yang SUDAH dikunci di sini supaya Fase 1 tinggal
-// MENAMBAH, bukan membongkar:
+// KEPUTUSAN STRUKTURAL — alasannya ada di Rewrite.md, jangan dibalik tanpa
+// membaca alasannya:
 //
-//  1. relationMode = "prisma" -> tidak ada FK maupun cascade di level DB.
-//     Konsekuensinya (R2): setiap FK wajib punya @@index MANUAL, setiap aksi
-//     hapus di admin harus restrict + mengecek dependent, dan seeder maupun
-//     script import wajib lewat Prisma — tidak pernah raw SQL.
-//  2. Dimensi divisionId pada RolePermission DIBUANG. @@unique bertiga
-//     [roleName, divisionId, permissionId] tidak enforceable di MySQL karena
-//     NULL dianggap distinct, sehingga baris global bisa duplikat tanpa batas
-//     (bug 7). Penggantinya @@unique([roleName, permissionId]) yang benar-benar
-//     ditegakkan indeks.
-//  3. Cluster / Unit / Division dari boilerplate DIBUANG seluruhnya — UBSC
-//     tidak punya struktur organisasi itu.
-//  4. User.roleId NULLABLE: customer tidak punya role staff.
-//  5. RefreshToken.audience memisahkan sesi customer dari sesi staff (R4).
-//
-// YANG WAJIB DIPUTUSKAN DI DRAFT SKEMA FASE 1 — jangan sampai terlewat:
-//
-//  - Transaction.receiptSequence Int @unique @default(autoincrement())
-//    berdampingan dengan PK uuid (R3). Nomor kuitansi ('UBSC-' + 6 digit)
-//    dibaca finance dari rekening koran setiap hari; MySQL mengizinkan
-//    auto-increment non-PK asalkan kolomnya menjadi kolom pertama sebuah key,
-//    dan @unique memenuhi syarat itu. Retrofit setelah ada transaksi berarti
-//    backfill — putuskan di draft, bukan belakangan.
-//  - PasswordResetToken & EmailVerificationToken mengikuti bentuk RefreshToken
-//    (tokenHash @unique, expiresAt, usedAt, userId).
-//  - Kolom domain customer pada User (lihat TODO di model User), termasuk
-//    password menjadi NULLABLE untuk akun yang hanya punya Google OAuth.
-//  - Denormalisasi Booking.startsAt / Booking.endsAt + @@index([endsAt])
-//    (bug 11: CONCAT() Laravel tidak bisa di-index).
+//  1. relationMode = "prisma" menghapus SEMUA foreign key dan cascade di level
+//     DB. Integritas hanya ditegakkan Prisma, dan hanya untuk operasi yang
+//     lewat Prisma (R2). Kompensasinya: restrict jangan cascade, media
+//     dibersihkan eksplisit di setiap jalur delete owner, raw DELETE dilarang
+//     ESLint, dan scripts/check-orphans.ts dijalankan mingguan.
+//  2. Transaction.receiptSequence — auto-increment BERDAMPINGAN dengan PK uuid
+//     (R3). Nomor kuitansi 'UBSC-' + 6 digit dibaca finance dari rekening
+//     koran tiap hari. MySQL mengizinkan auto-increment non-PK asalkan
+//     kolomnya jadi kolom pertama sebuah key — @unique memenuhi syarat itu.
+//     Catatan untuk finance: auto-increment MySQL tidak gap-free (insert yang
+//     di-rollback membakar satu nomor) — tapi Laravel juga begitu, jadi
+//     paritas terjaga.
+//  3. Polymorphic transactionable DIGANTI dua FK nullable bookingId /
+//     membershipId, masing-masing @unique. Nilai transactionable_type di
+//     produksi memang hanya dua (Booking, Membership), jadi tidak ada yang
+//     hilang — dan relasinya tetap bisa di-`include`. @unique pada kolom
+//     nullable memang membolehkan banyak NULL; di sini justru itu yang
+//     diinginkan.
+//  4. Booking.startsAt / endsAt — DENORMALISASI BARU (bug 11). Laravel memakai
+//     CONCAT(DATE(booking_date),' ',end_time) yang tidak bisa di-index padahal
+//     jalan tiap submit review.
+//  5. UANG disimpan sebagai Int, bukan BigInt. Laravel memakai bigint unsigned,
+//     tapi tidak satu pun nominal UBSC mendekati plafon Int (Rp 2.147.483.647)
+//     dan BigInt ter-serialisasi buruk ke JSON — ia melempar di JSON.stringify
+//     dan menuntut replacer khusus di ketiga repo. Kalau suatu saat ada nominal
+//     yang mendekati plafon itu, naikkan ke BigInt SEKALIGUS dengan
+//     serializer-nya.
+//  6. rating disimpan Float, bukan Decimal. Prisma Decimal mengembalikan objek
+//     decimal.js yang menular ke setiap jalur serialisasi; untuk nilai 0..5
+//     satu angka desimal, Double sudah eksak.
+//  7. startTime / endTime disimpan String "HH:mm", bukan DateTime @db.Time.
+//     Kolom activeSlots dan slotQuotas menyimpan jam dalam bentuk itu
+//     ({"Wednesday":["15:51","16:55"]}), jadi String membuat perbandingan slot
+//     langsung cocok — dan menghindari jebakan DateTime @db.Time yang
+//     mengembalikan tanggal 1970-01-01 di bagian tanggalnya.
+//  8. Dibuang dari Laravel: transactions.xendit_invoice_id dan
+//     transactions.checkout_url (bug 3 — Xendit di-drop total, dan isi
+//     checkout_url memang sudah salah), plus kolom internal
+//     spatie-medialibrary pada media (manipulations, generated_conversions,
+//     responsive_images, conversions_disk) yang tidak dipakai pipeline
+//     Multer+sharp kita.
+//  9. Dibuang dari boilerplate: Cluster, Unit, Division, dan dimensi
+//     RolePermission.divisionId (bug 7 — @@unique bertiga tidak enforceable di
+//     MySQL karena NULL dianggap distinct).
 // ============================================================================
 
 generator client {
@@ -51,6 +66,68 @@ generator client {
 datasource db {
   provider     = "mysql"
   relationMode = "prisma"
+}
+
+// ============================================================================
+// === ENUM ===
+// ============================================================================
+// Hanya set yang di Laravel benar-benar berupa DB enum() yang menjadi Prisma
+// enum. Set yang di Laravel berupa varchar (bookingMode, scheduleType,
+// priceType, cancelledReason, createdVia, action, actorType, method) TETAP
+// String — Zod di level API yang jadi otoritasnya. Menyimpang dari boilerplate
+// (yang tidak punya enum sama sekali) dan itu disengaja.
+
+enum BookingStatus {
+  pending
+  confirmed
+  cancelled
+  completed
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  EXPIRED
+  FAILED
+}
+
+enum VerificationStatus {
+  awaiting
+  rejected
+}
+
+enum MembershipStatus {
+  active
+  expired
+  cancelled
+}
+
+enum IdentityStatus {
+  unverified
+  pending
+  verified
+  rejected
+}
+
+// Kategori identitas yang melekat pada USER.
+enum IdentityCategory {
+  umum
+  warga_kampus
+}
+
+// Kategori yang melekat pada BARIS HARGA. Sengaja berbeda nilainya dari
+// IdentityCategory — Laravel memetakannya dengan
+// `identity_category === 'warga_kampus' ? 'warga_ub' : 'umum'`. Dua enum
+// terpisah membuat pemetaan itu eksplisit alih-alih tersembunyi di string.
+enum UserCategory {
+  warga_ub
+  umum
+}
+
+enum NewsStatus {
+  draft
+  published
+  archived
 }
 
 // ============================================================================
@@ -79,8 +156,6 @@ model RolePermission {
 
   // Tanpa divisionId, kombinasi ini benar-benar ditegakkan indeks (bug 7).
   @@unique([roleName, permissionId])
-  // Lookup by roleName sudah tercakup prefix kiri @@unique di atas, jadi yang
-  // perlu ditambah manual hanya index FK-nya (relationMode "prisma").
   @@index([permissionId])
   @@map("role_permissions")
 }
@@ -98,52 +173,82 @@ model Role {
 // ============================================================================
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  password     String // hash bcrypt
-  name         String
-  failedLogins Int      @default(0)
-  isLocked     Boolean  @default(false)
+  id       String  @id @default(uuid())
+  name     String
+  email    String  @unique
+  // NULLABLE: akun yang hanya punya Google OAuth tidak memiliki password
+  // lokal. Setiap pembanding password WAJIB memeriksa null lebih dulu.
+  password String?
+  avatar   String?
+
+  emailVerifiedAt DateTime?
+  failedLogins    Int       @default(0)
+  isLocked        Boolean   @default(false)
+
   // NULL = akun customer. Hanya akun staff yang punya role.
-  roleId       String?
-  role         Role?    @relation(fields: [roleId], references: [id])
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  roleId String?
+  role   Role?   @relation(fields: [roleId], references: [id])
 
-  refreshTokens RefreshToken[]
+  // ===== Profil customer =====
+  phoneNumber String?   @db.VarChar(20)
+  birthPlace  String?
+  birthDate   DateTime? @db.Date
 
-  // TODO Fase 1: kolom domain customer dari tabel users Laravel —
-  //   phone String? @db.VarChar(20)
-  //   category UserCategory?              (enum: umum | warga_kampus)
-  //   identityNumber String? @db.VarChar(50)
-  //   identityFilePath String?            (disimpan di storage/private/identity)
-  //   identityStatus IdentityStatus @default(unverified)
-  //   emailVerifiedAt DateTime?
-  //   googleId String? @unique
-  //   avatar String?
-  // Sekalian: password menjadi NULLABLE (akun hasil Google OAuth tidak punya
-  // password lokal) dan relasi bookings / memberships / transactions / reviews.
+  // ===== Identitas (antrean verifikasi front office) =====
+  identityCategory IdentityCategory?
+  identityNumber   String?           @db.VarChar(50)
+  // Disimpan di storage/private/identity — TIDAK PERNAH di-mount publik.
+  // Setiap pembacaan wajib lewat resolvePrivate() untuk mencegah path
+  // traversal dari nilai kolom ini.
+  identityFilePath String?
+  identityStatus   IdentityStatus    @default(unverified)
+
+  googleId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refreshTokens           RefreshToken[]
+  passwordResetTokens     PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
+  notificationStates      NotificationState[]
+
+  bookings           Booking[]               @relation("BookingCustomer")
+  checkedInBookings  Booking[]               @relation("BookingCheckedInBy")
+  memberships        Membership[]            @relation("MembershipOwner")
+  createdMemberships Membership[]            @relation("MembershipCreatedBy")
+  membershipHistory  MembershipHistory[]     @relation("MembershipHistorySubject")
+  membershipActions  MembershipHistory[]     @relation("MembershipHistoryActor")
+  transactions       Transaction[]           @relation("TransactionCustomer")
+  verifiedPayments   Transaction[]           @relation("TransactionVerifiedBy")
+  reviews            Review[]
+  authoredNews       News[]
+  sessionExceptions  ClassSessionException[]
+
   @@index([roleId])
+  @@index([identityStatus])
   @@map("users")
 }
 
 // ============================================================================
-// === SESSION (refresh token rotation + reuse detection, per audience) ===
+// === SESSION & TOKEN ===
 // ============================================================================
 
 model RefreshToken {
-  id         String   @id @default(uuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash  String   @unique
+  id        String @id @default(uuid())
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String @unique
   // 'customer' | 'staff'. Refresh WAJIB mencocokkan kolom ini (R4): cookie
   // customer yang diputar ulang tidak boleh mencetak access token staff.
-  audience   String
+  audience  String
+
   familyId   String? // stabil lintas rotasi: menandai satu sesi login/device
   ipAddress  String?
-  userAgent  String?  @db.Text
-  revoked    Boolean  @default(false)
+  userAgent  String? @db.Text
+  revoked    Boolean @default(false)
   replacedBy String? // id token pengganti (untuk reuse detection)
+
   createdAt  DateTime @default(now())
   expiresAt  DateTime
   lastUsedAt DateTime @default(now())
@@ -155,4 +260,679 @@ model RefreshToken {
   @@index([familyId])
   @@index([audience])
   @@map("refresh_tokens")
+}
+
+// Bentuknya sengaja meniru RefreshToken: simpan hash saja, beri expiry, sekali
+// pakai. Boilerplate tidak punya forgot-password sama sekali; pola inilah yang
+// dipakai ulang supaya tidak ada mekanisme token kedua yang berbeda.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_verification_tokens")
+}
+
+// ============================================================================
+// === EMAIL LOG ===
+// ============================================================================
+// Di luar Laravel. Email dikirim di luar transaksi dan kegagalannya TIDAK
+// dilempar (R8) — tanpa tabel ini, kegagalan SMTP jadi tidak terlihat sama
+// sekali. Staff bisa melihat dan memicu ulang kiriman gagal dari panel admin.
+// Pengganti murah untuk queue, dan cukup pada volume ini.
+
+model EmailLog {
+  id        String    @id @default(uuid())
+  toEmail   String
+  subject   String
+  template  String // verify-email | reset-password | payment-approved | payment-rejected
+  status    String    @default("pending") // pending | sent | failed
+  attempts  Int       @default(0)
+  lastError String?   @db.Text
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([toEmail])
+  @@map("email_logs")
+}
+
+// ============================================================================
+// === NOTIFICATION STATE ===
+// ============================================================================
+// Laravel menyimpan status read/dismiss notifikasi admin di SESSION. Tidak ada
+// server session lagi, jadi statusnya pindah ke tabel. fingerprint menandai
+// versi isi notifikasi: kalau isinya berubah, notifikasi muncul lagi meski
+// pernah dibaca.
+
+model NotificationState {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notificationId String
+  fingerprint    String
+  createdAt      DateTime @default(now())
+
+  @@unique([userId, notificationId])
+  @@index([userId])
+  @@map("notification_states")
+}
+
+// ============================================================================
+// === FASILITAS ===
+// ============================================================================
+
+model FacilityCategory {
+  id          String     @id @default(uuid())
+  name        String
+  slug        String     @unique
+  description String?    @db.Text
+  sortOrder   Int        @default(0)
+  facilities  Facility[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@map("facility_categories")
+}
+
+model Facility {
+  id                 String           @id @default(uuid())
+  facilityCategoryId String
+  facilityCategory   FacilityCategory @relation(fields: [facilityCategoryId], references: [id])
+
+  name        String
+  slug        String  @unique
+  description String? @db.Text
+  location    String?
+  venueType   String?
+
+  // Batas atas 9999 ditegakkan Zod (bug 8: di Laravel capacity tidak punya
+  // batas atas sementara quota dibatasi 1..9999, sehingga salah ketik "300"
+  // di lapangan badminton menjualnya 300 kali).
+  capacity Int @default(1)
+
+  // 'court' | 'class'. Tetap String, Zod yang jadi otoritasnya.
+  bookingMode String @default("court") @db.VarChar(16)
+
+  // { "Wednesday": ["15:51", "16:55"], ... } — hari ke daftar jam "HH:mm".
+  // Sesi TIDAK PERNAH disimpan; selalu diturunkan dari activeSlots + durasi
+  // harga. Mengubah jadwal tidak boleh menulis ulang apa pun yang sudah
+  // terjual.
+  activeSlots Json?
+  // { "Wednesday": { "15:51": 10 } } — kuota per slot, menimpa capacity.
+  slotQuotas  Json?
+  sessionNote String? @db.VarChar(160)
+  classCode   String?
+
+  rating          Float   @default(5.0)
+  displayMetadata Json?
+  isActive        Boolean @default(true)
+  sortOrder       Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  units             FacilityUnit[]
+  prices            FacilityPrice[]
+  bookings          Booking[]
+  sessionExceptions ClassSessionException[]
+
+  @@index([facilityCategoryId])
+  @@index([isActive, sortOrder])
+  @@map("facilities")
+}
+
+model FacilityUnit {
+  id         String   @id @default(uuid())
+  facilityId String
+  facility   Facility @relation(fields: [facilityId], references: [id])
+
+  name     String
+  isActive Boolean @default(true)
+  capacity Int     @default(1)
+
+  useCustomSchedule Boolean @default(false)
+  activeSlots       Json?
+  slotQuotas        Json?
+  // Harga unit menang HANYA jika useCustomPricing true DAN unit punya >= 1
+  // baris harga. Satu tanpa yang lain tidak cukup — lihat FacilityPriceResolver.
+  useCustomPricing  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prices            FacilityUnitPrice[]
+  bookings          Booking[]
+  sessionExceptions ClassSessionException[]
+
+  @@index([facilityId, isActive])
+  @@map("facility_units")
+}
+
+model FacilityPrice {
+  id         String   @id @default(uuid())
+  facilityId String
+  facility   Facility @relation(fields: [facilityId], references: [id])
+
+  userCategory    UserCategory
+  priceType       String       @default("per_session") @db.VarChar(20) // per_session | monthly_package
+  label           String
+  price           Int
+  durationMinutes Int?
+
+  // 'regular' TIDAK PERNAH match apa pun — ia tier fallback, bukan rule.
+  // Urutan resolver: special yang matches() -> 'Reguler' -> first of category
+  // -> first.
+  scheduleType   String    @default("regular")
+  applicableDays Json?
+  startsAt       String?   @db.VarChar(5) // "HH:mm"
+  endsAt         String?   @db.VarChar(5)
+  startsOn       DateTime? @db.Date
+  endsOn         DateTime? @db.Date
+
+  notes     String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([facilityId, userCategory])
+  @@map("facility_prices")
+}
+
+model FacilityUnitPrice {
+  id             String       @id @default(uuid())
+  facilityUnitId String
+  facilityUnit   FacilityUnit @relation(fields: [facilityUnitId], references: [id])
+
+  userCategory    UserCategory
+  priceType       String       @default("per_session") @db.VarChar(20)
+  label           String
+  price           Int
+  durationMinutes Int?
+
+  scheduleType   String    @default("regular")
+  applicableDays Json?
+  startsAt       String?   @db.VarChar(5)
+  endsAt         String?   @db.VarChar(5)
+  startsOn       DateTime? @db.Date
+  endsOn         DateTime? @db.Date
+
+  notes     String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([facilityUnitId, userCategory])
+  @@map("facility_unit_prices")
+}
+
+// ============================================================================
+// === JADWAL & BOOKING ===
+// ============================================================================
+
+model BookingSchedule {
+  id          String  @id @default(uuid())
+  month       Int
+  year        Int
+  isOpen      Boolean @default(false)
+  // Array "YYYY-MM-DD". WAJIB dibersihkan lewat cleanClosedDatesForMonth()
+  // sebelum dipakai (bug 6: buildMonth membaca kolom ini mentah, sehingga
+  // tanggal dari bulan lain tampil tertutup di roster admin tapi tetap
+  // bookable bagi customer).
+  closedDates Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([month, year])
+  @@map("booking_schedules")
+}
+
+model Booking {
+  id     String  @id @default(uuid())
+  userId String?
+  user   User?   @relation("BookingCustomer", fields: [userId], references: [id])
+
+  // Self-reference. Baris lead menyimpan ID-NYA SENDIRI. Dipertahankan apa
+  // adanya dari Laravel. Booking tidak pernah di-hard-delete — "delete" di
+  // panel admin berarti status: cancelled — jadi NoAction aman.
+  bookingGroupId String?
+  bookingGroup   Booking?  @relation("BookingGroup", fields: [bookingGroupId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  groupMembers   Booking[] @relation("BookingGroup")
+
+  // Booking tamu (dibuat staff di meja depan) tidak punya user.
+  customerName  String?
+  customerPhone String?
+
+  facilityId     String
+  facility       Facility      @relation(fields: [facilityId], references: [id])
+  facilityUnitId String?
+  facilityUnit   FacilityUnit? @relation(fields: [facilityUnitId], references: [id])
+
+  bookingDate DateTime @db.Date
+  startTime   String   @db.VarChar(5) // "HH:mm"
+  endTime     String   @db.VarChar(5)
+
+  // Denormalisasi dari bookingDate + startTime/endTime (bug 11). SATU-SATUNYA
+  // kolom yang boleh dipakai untuk query rentang waktu — CONCAT() tidak bisa
+  // di-index. Wajib ditulis ulang setiap kali bookingDate / startTime /
+  // endTime berubah.
+  startsAt DateTime
+  endsAt   DateTime
+
+  pax           Int           @default(1)
+  subtotalPrice Int
+  status        BookingStatus @default(pending)
+
+  // NULL berarti "ditahan SELAMANYA", bukan "tidak ada hold" — penanda booking
+  // dibuat staff atau bukti pembayaran sudah diunggah. Jangan pernah
+  // memperlakukan NULL sebagai hold yang sudah lewat.
+  holdExpiresAt   DateTime?
+  cancelledReason String?   @db.VarChar(64)
+
+  checkInToken  String?   @unique @db.VarChar(40)
+  checkedInAt   DateTime?
+  checkedInById String?
+  checkedInBy   User?     @relation("BookingCheckedInBy", fields: [checkedInById], references: [id])
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transaction Transaction?
+
+  @@index([userId])
+  @@index([facilityId, bookingDate])
+  @@index([facilityUnitId, bookingDate])
+  @@index([status, holdExpiresAt])
+  @@index([bookingGroupId])
+  @@index([checkedInById])
+  // Mendukung scopeEnded (bug 11) — jalan tiap submit review.
+  @@index([endsAt])
+  @@map("bookings")
+}
+
+model ClassSessionException {
+  id             String       @id @default(uuid())
+  facilityId     String
+  facility       Facility     @relation(fields: [facilityId], references: [id])
+  facilityUnitId String
+  facilityUnit   FacilityUnit @relation(fields: [facilityUnitId], references: [id])
+
+  sessionDate DateTime @db.Date
+  startTime   String   @db.VarChar(5)
+  reason      String?  @db.VarChar(160)
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([facilityUnitId, sessionDate, startTime])
+  @@index([facilityId, sessionDate])
+  @@index([createdById])
+  @@map("class_session_exceptions")
+}
+
+// ============================================================================
+// === MEMBERSHIP ===
+// ============================================================================
+
+model MembershipPlan {
+  id          String  @id @default(uuid())
+  name        String  @db.VarChar(100)
+  description String? @db.Text
+
+  // Kolom tampilan kartu publik di halaman pricing.
+  publicBadge  String? @db.VarChar(80)
+  savingsLabel String? @db.VarChar(80)
+  ctaLabel     String? @db.VarChar(80)
+  cardImageUrl String?
+
+  price          Int
+  durationMonths Int
+  features       Json?
+  isActive       Boolean @default(true)
+  sortOrder      Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships Membership[]
+  histories   MembershipHistory[]
+
+  @@map("membership_plans")
+}
+
+model Membership {
+  id     String  @id @default(uuid())
+  userId String?
+  user   User?   @relation("MembershipOwner", fields: [userId], references: [id])
+
+  customerName     String?
+  membershipPlanId String?
+  membershipPlan   MembershipPlan? @relation(fields: [membershipPlanId], references: [id])
+
+  renewedFromMembershipId String?
+  renewedFrom             Membership?  @relation("MembershipRenewal", fields: [renewedFromMembershipId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  renewals                Membership[] @relation("MembershipRenewal")
+
+  startDate DateTime         @db.Date
+  endDate   DateTime         @db.Date
+  status    MembershipStatus @default(active)
+
+  createdById String?
+  createdBy   User?   @relation("MembershipCreatedBy", fields: [createdById], references: [id])
+  createdVia  String  @default("admin") @db.VarChar(20) // admin | self
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  histories   MembershipHistory[] @relation("MembershipHistoryMembership")
+  renewalLogs MembershipHistory[] @relation("MembershipHistoryRenewedFrom")
+  transaction Transaction?
+
+  // Mendukung pencegahan overlap: satu user tidak boleh punya dua membership
+  // aktif yang rentangnya bertumpuk. Ditegakkan lewat lock + cek di service,
+  // bukan oleh indeks — MySQL tidak punya exclusion constraint.
+  @@index([userId, status, startDate, endDate])
+  @@index([membershipPlanId])
+  @@index([renewedFromMembershipId])
+  @@index([createdById])
+  @@map("memberships")
+}
+
+model MembershipHistory {
+  id           String     @id @default(uuid())
+  membershipId String
+  membership   Membership @relation("MembershipHistoryMembership", fields: [membershipId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation("MembershipHistorySubject", fields: [userId], references: [id])
+
+  membershipPlanId String?
+  membershipPlan   MembershipPlan? @relation(fields: [membershipPlanId], references: [id])
+
+  transactionId String?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+
+  renewedFromMembershipId String?
+  renewedFrom             Membership? @relation("MembershipHistoryRenewedFrom", fields: [renewedFromMembershipId], references: [id])
+
+  actorId   String?
+  actor     User?   @relation("MembershipHistoryActor", fields: [actorId], references: [id])
+  actorType String  @default("admin") @db.VarChar(20)
+  action    String  @db.VarChar(32) // created | renewed | cancelled | expired | ...
+
+  startDate     DateTime @db.Date
+  endDate       DateTime @db.Date
+  amount        Int?
+  paymentStatus String?  @db.VarChar(20)
+  metadata      Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([membershipId, createdAt])
+  @@index([userId, action])
+  @@index([membershipPlanId])
+  @@index([transactionId])
+  @@index([renewedFromMembershipId])
+  @@index([actorId])
+  @@map("membership_histories")
+}
+
+// ============================================================================
+// === TRANSAKSI (pembayaran transfer manual) ===
+// ============================================================================
+
+model Transaction {
+  id     String  @id @default(uuid())
+  userId String?
+  user   User?   @relation("TransactionCustomer", fields: [userId], references: [id])
+
+  // Nomor kuitansi: 'UBSC-' + receiptSequence di-pad 6 digit. Auto-increment
+  // berdampingan dengan PK uuid (R3) — @unique yang membuatnya sah di MySQL.
+  receiptSequence Int @unique @default(autoincrement())
+
+  // Pengganti polymorphic transactionable Laravel. TEPAT SATU yang terisi;
+  // invariannya ditegakkan di service, bukan oleh DB.
+  bookingId    String?     @unique
+  booking      Booking?    @relation(fields: [bookingId], references: [id])
+  membershipId String?     @unique
+  membership   Membership? @relation(fields: [membershipId], references: [id])
+
+  amount Int
+  method String @default("manual") @db.VarChar(16)
+
+  // Kode unik 3 digit yang ditambahkan ke nominal supaya transfer bisa
+  // dicocokkan otomatis. pendingTotal = amount + uniqueCode, dan @unique-nya
+  // adalah MEKANISME KOREKTNESS, bukan optimasi: dua checkout bersamaan akan
+  // membaca kode bebas yang sama, jadi keunikan dijamin indeks lewat
+  // coba-insert-dan-tangkap-P2002, bukan lewat pre-check.
+  uniqueCode   Int?
+  pendingTotal Int? @unique
+
+  paymentStatus      PaymentStatus       @default(UNPAID)
+  verificationStatus VerificationStatus?
+
+  proofPath       String?
+  proofUploadedAt DateTime?
+  verifiedById    String?
+  verifiedBy      User?     @relation("TransactionVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedAt      DateTime?
+  rejectionReason String?   @db.Text
+
+  expiresAt DateTime?
+  paidAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  membershipHistories MembershipHistory[]
+
+  @@index([userId])
+  @@index([paymentStatus, createdAt])
+  @@index([verificationStatus, proofUploadedAt])
+  @@index([verifiedById])
+  @@map("transactions")
+}
+
+// ============================================================================
+// === REVIEW ===
+// ============================================================================
+
+model Review {
+  id     String  @id @default(uuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  reviewerName String?
+  rating       Float
+  text         String  @db.Text
+  isApproved   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([isApproved, createdAt])
+  @@map("reviews")
+}
+
+// ============================================================================
+// === MEDIA (polymorphic) ===
+// ============================================================================
+// Prisma tidak punya polymorphic relation, jadi modelType + modelId
+// dipertahankan TANPA relasi Prisma. Konsekuensinya dua hal wajib:
+//  - dimuat lewat media-services.listFor() sebagai batch loader, bukan
+//    per-baris, supaya tidak jadi N+1;
+//  - media-services.deleteForModel() dipanggil di SETIAP jalur delete owner —
+//    tidak ada cascade DB yang menolongnya (R2).
+// Kolom internal spatie-medialibrary (manipulations, generated_conversions,
+// responsive_images, conversions_disk) TIDAK di-port; pipeline kita
+// Multer + sharp.
+
+model Media {
+  id        String  @id @default(uuid())
+  modelType String // Facility | FacilityUnit | News | PromoCarousel | SponsorLogo | Reel | Testimonial
+  modelId   String
+  uuid      String? @unique
+
+  collectionName String // hero | thumbnail | slide | logo | video | image | unit_image
+  name           String
+  fileName       String
+  mimeType       String?
+  // 'public'  -> uploads/, disajikan express.static
+  // 'private' -> storage/private/, TIDAK PERNAH di-mount
+  disk           String  @default("public")
+  size           Int
+
+  customProperties Json?
+  orderColumn      Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([modelType, modelId, collectionName])
+  @@index([orderColumn])
+  @@map("media")
+}
+
+// ============================================================================
+// === CMS ===
+// ============================================================================
+
+model NewsCategory {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  news      News[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("news_categories")
+}
+
+model News {
+  id             String        @id @default(uuid())
+  newsCategoryId String?
+  newsCategory   NewsCategory? @relation(fields: [newsCategoryId], references: [id])
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  title   String
+  slug    String     @unique
+  excerpt String?    @db.Text
+  content String     @db.LongText
+  status  NewsStatus @default(draft)
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([newsCategoryId])
+  @@index([authorId])
+  @@index([status, publishedAt])
+  @@map("news")
+}
+
+model PromoCarousel {
+  id        String   @id @default(uuid())
+  title     String?
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("promo_carousels")
+}
+
+model Reel {
+  id        String   @id @default(uuid())
+  title     String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@map("reels")
+}
+
+model SponsorLogo {
+  id        String   @id @default(uuid())
+  name      String
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("sponsor_logos")
+}
+
+model Testimonial {
+  id         String   @id @default(uuid())
+  authorName String
+  authorRole String
+  quote      String   @db.Text
+  isActive   Boolean  @default(true)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("testimonials")
+}
+
+model InfoBanner {
+  id        String   @id @default(uuid())
+  message   String
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("info_banners")
+}
+
+// ============================================================================
+// === PENGATURAN SISTEM ===
+// ============================================================================
+// key/value datar. Dipakai antara lain untuk gym traffic dan nomor rekening
+// tujuan transfer manual.
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
 }

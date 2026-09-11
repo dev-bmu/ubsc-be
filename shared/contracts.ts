@@ -73,6 +73,7 @@ export type ErrorCode =
   | 'PAYLOAD_TOO_LARGE' // 413 — unggahan melebihi batas multer
   | 'HOLD_LAPSED' // 409 — hold pembayaran sudah lewat saat bukti masuk (Fase 3)
   | 'PENDING_TOTAL_EXHAUSTED' // 409 — 25 percobaan kode nominal unik habis (Fase 3, R11)
+  | 'SERVICE_UNAVAILABLE' // 502/503/504 — dependensi luar (DB, SMTP, Google) sedang tidak bisa dihubungi; boleh dicoba lagi
   | 'INTERNAL_ERROR' // 500 — pesan generik; detail hanya masuk log, tidak pernah ke klien
 
 // ===== Meta & health =====

@@ -54,8 +54,20 @@ export function createAuthRequired(audience: TokenAudience): RequestHandler {
       request.audience = audience
       next()
     } catch (error) {
-      logger.error(`Verifikasi access token gagal (audience=${audience}): ${(error as Error).message}`)
-      next(new ResponseError(401, 'Sesi kedaluwarsa. Silakan masuk kembali.', 'UNAUTHENTICATED'))
+      // Bedakan sebabnya DI LOG. Pesan ke klien tetap satu supaya tidak
+      // membocorkan apa pun, tapi log yang menyamaratakan semuanya sebagai
+      // "kedaluwarsa" membuat siapa pun yang men-debug audience-mismatch
+      // mengejar masa berlaku token — padahal tokennya masih segar.
+      const name = (error as Error).name
+      const message = (error as Error).message
+      if (name === 'TokenExpiredError') {
+        logger.info(`Access token kedaluwarsa (audience=${audience})`)
+      } else if (message.includes('audience invalid') || message.includes('jwt audience invalid')) {
+        logger.warn(`AUDIENCE_MISMATCH access token: diminta=${audience} — token dari audience lain dipakai di route ini`)
+      } else {
+        logger.error(`Verifikasi access token gagal (audience=${audience}): ${name}: ${message}`)
+      }
+      next(new ResponseError(401, 'Sesi tidak valid atau sudah berakhir. Silakan masuk kembali.', 'UNAUTHENTICATED'))
     }
   }
 }
