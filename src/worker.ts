@@ -59,11 +59,19 @@ async function bootstrap(): Promise<void> {
      */
     connectionLimit: 1,
     idleTimeout: env.DB_POOL_IDLE_TIMEOUT,
-    // Sama seperti client API: arti affectedRows/count dipakai sebagai CAS di Fase 3.
+    // Sama seperti client API — lihat catatan foundRows di application/database.ts.
     foundRows: true
   })
 
   const workerClient: PrismaClient = new PrismaClientCtor({ adapter, log: ['error'] })
+
+  // Job memanggil service domain (expire() dll.) yang mengimpor prismaClient dari
+  // application/database.ts. Modul itu memakai globalThis.prismaClient bila sudah ada, jadi client
+  // worker dipasang DI SINI, SEBELUM scheduler (dan rantai importnya) dimuat: seluruh service di proses
+  // ini ikut memakai pool 1 koneksi, dan pool API 20 koneksi tidak pernah dibuka. Satu koneksi juga yang
+  // membuat GET_LOCK dan transaksi sweep berjalan di sesi MySQL yang sama (R14). Urutan ini wajib —
+  // import statis scheduler di atas baris ini akan membuka pool API diam-diam.
+  ;(globalThis as unknown as { prismaClient?: PrismaClient }).prismaClient = workerClient
 
   const { setLockClient } = await import('./jobs/lock.js')
   setLockClient(workerClient)
@@ -74,8 +82,8 @@ async function bootstrap(): Promise<void> {
   logger.info(`Worker UBSC siap (${env.NODE_ENV}, TZ ${env.TZ}, scheduler ${SCHEDULER_TIMEZONE}) — ${jobCount} job terdaftar`)
 
   if (jobCount === 0) {
-    // Fase 0 memang belum punya job; log ini supaya worker yang diam tidak disangka mati.
-    logger.warn('Belum ada job terdaftar. Job pertama masuk di Fase 3 (payments:release-expired).')
+    // Log ini supaya worker yang diam tidak disangka mati.
+    logger.warn('Tidak ada job terdaftar — periksa array jobs di jobs/scheduler.ts.')
   }
 
   registerShutdown(workerClient, stopJobs, waitForRunningJobs, env.SHUTDOWN_TIMEOUT_MS)

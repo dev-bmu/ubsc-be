@@ -134,3 +134,14 @@ export const publicLimiter = createLimiter('public', {
   windowSeconds: 60,
   message: 'Terlalu banyak permintaan. Mohon tunggu sebentar.'
 })
+
+/**
+ * Unggah bukti transfer: 10 per menit (throttle:10,1 Laravel). Instance sendiri, BUKAN bookingLimiter:
+ * express-rate-limit menghitung per instance, jadi berbagi instance berarti unggahan bukti ikut
+ * menghabiskan jatah checkout.
+ */
+export const proofUploadLimiter = createLimiter('proof-upload', {
+  max: 10,
+  windowSeconds: 60,
+  message: 'Terlalu banyak unggahan. Coba lagi dalam satu menit.'
+})

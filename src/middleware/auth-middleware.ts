@@ -74,3 +74,42 @@ export function createAuthRequired(audience: TokenAudience): RequestHandler {
 
 export const customerAuthRequired = createAuthRequired('customer')
 export const staffAuthRequired = createAuthRequired('staff')
+
+// ===== Auth opsional =====
+
+/**
+ * Untuk endpoint publik yang jawabannya BERGANTUNG pada siapa yang bertanya — grid slot dan kalender
+ * bulan: kategori harga (warga UB terverifikasi vs umum) dan tanda "sudah Anda pesan".
+ *
+ * Tanpa header Authorization: pengunjung anonim, lanjut. Header ADA tapi tidak sah: 401, bukan
+ * diabaikan. Kalau diabaikan, interceptor axios tidak pernah tahu token perlu di-refresh, dan
+ * pelanggan warga UB yang tokennya baru kedaluwarsa diam-diam melihat harga umum.
+ */
+export function createOptionalAuth(audience: TokenAudience): RequestHandler {
+  const authRequired = createAuthRequired(audience)
+  return (req, res, next) => {
+    if (!req.header('authorization')) return next()
+    return authRequired(req, res, next)
+  }
+}
+
+export const customerAuthOptional = createOptionalAuth('customer')
+
+// ===== Pagar akun customer =====
+
+/**
+ * Pengganti RedirectStaffFromPublic Laravel untuk permukaan tulis pelanggan (booking, pembayaran,
+ * riwayat). Staff boleh LOGIN di situs publik (Fase 1), tapi akunnya tidak boleh membuat reservasi
+ * atau membayar sebagai pelanggan — di Laravel request semacam itu dijawab 403.
+ */
+export const denyStaffAccounts: RequestHandler = (req, _res, next) => {
+  if ((req as UserRequest).user?.role) return next(new ResponseError(403, 'Akun staff tidak dapat mengakses halaman pengguna.', 'FORBIDDEN'))
+  next()
+}
+
+/** Pengganti middleware `verified` Laravel pada halaman pembayaran. */
+export const requireVerifiedEmail: RequestHandler = (req, _res, next) => {
+  const user = (req as UserRequest).user
+  if (user && !user.emailVerifiedAt) return next(new ResponseError(403, 'Verifikasi email Anda terlebih dahulu.', 'FORBIDDEN'))
+  next()
+}

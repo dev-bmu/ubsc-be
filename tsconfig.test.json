@@ -1,0 +1,16 @@
+{
+  // ===== Kompilasi untuk test =====
+  // Dipakai dua pihak:
+  //   1. ts-jest (jest.config.js) — transpile per berkas. isolatedModules wajib true untuk module
+  //      Node16; tanpanya ts-jest memperingatkan di setiap berkas dan resolusi tipe paket dual
+  //      ESM/CJS (sharp) bisa berbeda dari tsc.
+  //   2. npm run typecheck — memeriksa tipe src/ DAN tests/ sekaligus, karena ts-jest dalam mode
+  //      isolatedModules tidak lagi melaporkan error tipe.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["src", "shared", "scripts", "prisma", "tests"],
+  "exclude": ["node_modules", "dist"]
+}

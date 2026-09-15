@@ -1,4 +1,6 @@
 import { BookingStatus, PaymentStatus } from '@prisma/client'
+import { jakartaDate } from '../../src/utils/clock'
+import { randomAlphanumeric } from '../../src/utils/random'
 import { combineDateTime, dateOnly, prisma, tally } from './shared'
 
 // ============================================================================
@@ -112,9 +114,10 @@ export async function seedBookings() {
     return
   }
 
-  const now = new Date()
-  const month = now.getMonth()
-  const year = now.getFullYear()
+  // Bulan berjalan menurut kalender Jakarta, tidak bergantung TZ mesin yang menjalankan seeder.
+  const today = jakartaDate()
+  const month = Number(today.slice(5, 7)) - 1
+  const year = Number(today.slice(0, 4))
 
   let bookingsCreated = 0
   let transactionsCreated = 0
@@ -141,7 +144,10 @@ export async function seedBookings() {
         startsAt: combineDateTime(bookingDate, startTime),
         endsAt: combineDateTime(bookingDate, endTime),
         subtotalPrice,
-        status
+        status,
+        // Hook `creating` model Booking Laravel memberi SETIAP booking token check-in, termasuk
+        // yang dibuat seeder. Tanpa ini tiket QR booking demo yang PAID tidak punya URL.
+        checkInToken: randomAlphanumeric(32)
       }
     })
     bookingsCreated++

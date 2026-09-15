@@ -6,6 +6,7 @@
 
 import { schedule as scheduleCron, type ScheduledTask } from 'node-cron'
 import { withNamedLock } from './lock'
+import { releaseExpiredPayments } from './release-expired-payments'
 import { logError, logger } from '../utils/logger'
 
 /**
@@ -25,14 +26,18 @@ export interface JobDefinition {
 /** Prefix nama lock supaya tidak bentrok dengan lock lain di instance MySQL yang sama. */
 const LOCK_PREFIX = 'ubsc:job:'
 
-/**
- * Daftar job. Fase 0 sengaja kosong — skeleton belum punya domain bisnis.
- *
- * TODO Fase 3: payments:release-expired tiap 5 menit, hanya booking lead & standalone (baris
- * anggota paket ikut lewat lead-nya), dan skip baris yang expire()-nya mengembalikan false
- * (bukti bayar sudah masuk duluan — bukan error, memang tidak boleh di-expire).
- */
-const jobs: JobDefinition[] = []
+/** Daftar job. Menambah job = menambah satu baris di sini, tidak di tempat lain. */
+const jobs: JobDefinition[] = [
+  {
+    // Hanya booking lead & standalone (anggota paket ikut lewat lead-nya), dan baris yang expire()-nya
+    // mengembalikan false dilewati — bukti bayar sudah masuk duluan, memang tidak boleh di-expire.
+    name: 'payments:release-expired',
+    schedule: '*/5 * * * *',
+    handler: async () => {
+      await releaseExpiredPayments()
+    }
+  }
+]
 
 let tasks: ScheduledTask[] = []
 

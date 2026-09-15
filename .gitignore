@@ -42,6 +42,11 @@ storage/private/**
 # MAIL_TRANSPORT=log menulis .eml ke sini, bukan mengirim SMTP.
 storage/mail-preview/
 
+# ===== Keluaran test =====
+# tests/setup-env.ts mengarahkan bukti bayar dan .eml test ke sini, terpisah dari data dev.
+storage/test-private/
+storage/test-mail-preview/
+
 # ===== OS & editor =====
 .DS_Store
 Thumbs.db

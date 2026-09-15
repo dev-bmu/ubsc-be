@@ -135,9 +135,8 @@ export interface AuthSessionDto {
 
 // ===== DTO domain =====
 //
-// TODO Fase 1: UserDto, RoleDto, PermissionDto (layar Role & Access + Internal Users).
-// TODO Fase 3: FacilityDto, FacilityUnitDto, FacilityPricingDto, SlotDto, BookingDto,
-//              TransactionDto — beserta enum status yang dipakai bersama FE.
+// TODO Fase 8: UserDto, RoleDto, PermissionDto (layar Role & Access + Internal Users).
+// TODO Fase 5: FacilityDto, FacilityUnitDto, FacilityPricingDto (halaman fasilitas & pricing).
 // TODO Fase 6: MembershipDto, MembershipPlanDto, IdentityDto, ReviewDto.
 // TODO Fase 5: NewsDto, PromoDto, ReelDto, SponsorDto, TestimonialDto, AnnouncementDto.
 //
@@ -145,3 +144,211 @@ export interface AuthSessionDto {
 // mengembalikannya. Setiap penambahan atau perubahan field WAJIB diikuti
 // npm run sync:contracts di ubsc-landing DAN ubsc-admin pada commit yang sama-sama
 // di-review, kalau tidak /api/meta/contract-hash akan mulai berteriak saat boot dev.
+
+// ===== Booking & pembayaran (Fase 3) =====
+//
+// Nilai string harga (`price`, `total`) sudah terformat "Rp 1.500.000" dengan SPASI BIASA, persis
+// keluaran number_format() Laravel — bukan Intl (yang memakai non-breaking space). Klien boleh
+// menampilkan apa adanya; untuk hitungan selalu pakai pasangan `...Raw`.
+// Tanggal kalender "YYYY-MM-DD" dan jam "HH:mm" selalu waktu Jakarta. Instan (holdExpiresAt,
+// proofUploadedAt) ISO-8601 UTC.
+
+export type BookingStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed'
+export type PaymentStatus = 'UNPAID' | 'PAID' | 'EXPIRED' | 'FAILED'
+export type VerificationStatus = 'awaiting' | 'rejected'
+
+/** Status satu slot lapangan. Tiga keadaan, bukan dua: slot yang lewat tidak sama dengan slot yang terjual. */
+export type SlotStatus = 'available' | 'booked' | 'past'
+
+export interface SlotDto {
+  startTime: string
+  endTime: string
+  label: string
+  price: string
+  priceRaw: number
+  status: SlotStatus
+  past: boolean
+  wasBooked: boolean
+  remaining: number
+  capacity: number
+  facilityUnitId: string | null
+}
+
+export type ClosedReason = 'month_closed' | 'date_closed'
+
+/** GET /api/public/booking/slots */
+export interface SlotsDto {
+  closed: boolean
+  reason?: ClosedReason
+  requiresUnit?: boolean
+  slots: SlotDto[]
+  closedDates: string[]
+}
+
+/** Status satu sesi kelas. `full` diuji sebelum `past` supaya sesi yang habis lalu berjalan tidak mengaku kosong. */
+export type SessionStatus = 'available' | 'full' | 'past' | 'closed' | 'cancelled'
+
+export interface MonthSessionDto {
+  date: string
+  startTime: string
+  endTime: string
+  label: string
+  price: string
+  priceRaw: number
+  status: SessionStatus
+  past: boolean
+  wasBooked: boolean
+  remaining: number
+  capacity: number
+  alreadyBooked: boolean
+  facilityUnitId: string | null
+}
+
+export interface MonthDayDto {
+  weekday: string
+  closed: boolean
+  sessions: MonthSessionDto[]
+}
+
+export interface MonthPatternDto {
+  weekday: string
+  weekdayLabel: string
+  startTime: string
+  endTime: string
+  sessionCount: number
+}
+
+export interface MonthPackageDto {
+  priceRaw: number
+  price: string
+  sessionCount: number
+  savingRaw: number
+}
+
+export interface MonthSummaryDto {
+  sessionCount: number
+  availableCount: number
+  totalRaw: number
+  total: string
+  package: MonthPackageDto | null
+}
+
+/** GET /api/public/booking/month */
+export interface MonthDto {
+  month: string
+  monthLabel: string
+  closedDates: string[]
+  closed: boolean
+  reason: ClosedReason | null
+  requiresUnit: boolean
+  capacity?: number
+  sessionNote?: string
+  /** Dikunci "YYYY-MM-DD"; hanya tanggal yang punya sesi. */
+  days: Record<string, MonthDayDto>
+  patterns: MonthPatternDto[]
+  summary: MonthSummaryDto
+}
+
+/** POST /api/customer/booking — satu rentang lapangan ATAU banyak sesi kelas. */
+export interface CreateBookingRequest {
+  facilityId: string
+  facilityUnitId?: string | null
+  bookingDate?: string
+  startTime?: string
+  endTime?: string
+  sessions?: Array<{ date: string; startTime: string; endTime: string }>
+  notes?: string | null
+}
+
+export interface BookingCreatedDto {
+  /** Booking lead — id yang dipakai halaman pembayaran. */
+  bookingId: string
+  transactionId: string
+  holdExpiresAt: string
+}
+
+export interface BookingSessionDto {
+  id: string
+  /** Carbon translatedFormat('D, d M Y'): "Sen, 17 Agt 2026". */
+  date: string
+  /** "08:00 – 09:00" (en dash). */
+  time: string
+  status: BookingStatus
+  checkedInAt?: string | null
+  checkInUrl?: string | null
+}
+
+/**
+ * GET /api/customer/booking/:bookingId/pembayaran bila id yang diminta adalah ANGGOTA paket.
+ * Hanya lead yang memegang transfer; klien mengganti URL ke lead lalu meminta ulang.
+ */
+export interface PaymentRedirectDto {
+  redirectToBookingId: string
+}
+
+/**
+ * GET /api/customer/booking/:bookingId/pembayaran, dan balasan
+ * POST /api/customer/booking/:bookingId/pembayaran/bukti (keadaan terbaru setelah bukti masuk).
+ */
+export interface PaymentDetailDto {
+  /** Hanya untuk paket: seluruh sesinya, urut tanggal lalu jam. */
+  sessions: BookingSessionDto[] | null
+  booking: {
+    id: string
+    facilityName: string
+    unitName: string | null
+    date: string
+    startTime: string
+    endTime: string
+    status: BookingStatus
+    holdExpiresAt: string | null
+  }
+  payment: {
+    receiptNumber: string
+    amount: number
+    uniqueCode: number
+    total: number
+    paymentStatus: PaymentStatus
+    verificationStatus: VerificationStatus | null
+    rejectionReason: string | null
+    proofUploadedAt: string | null
+    hasProof: boolean
+    canUpload: boolean
+  }
+  bank: { bank: string; accountNumber: string; accountHolder: string }
+  ticket: { checkInUrl: string; checkedInAt: string | null } | null
+}
+
+/** GET /api/customer/booking — satu kartu per pembelian (paket = satu kartu), maksimal 50. */
+export interface BookingHistoryItemDto {
+  sessions: BookingSessionDto[] | null
+  id: string
+  facilityName: string
+  unitName: string | null
+  date: string
+  startTime: string
+  endTime: string
+  status: BookingStatus
+  amount: number
+  paymentStatus: PaymentStatus
+  verificationStatus: VerificationStatus | null
+  transferTotal: number
+  hasPayment: boolean
+  holdExpiresAt: string | null
+  hasTicket: boolean
+  checkedInAt: string | null
+  receipt: string | null
+  createdAt: string
+}
+
+/** POST /api/admin/payments/:transactionId/approve | reject */
+export interface PaymentDecisionDto {
+  transactionId: string
+  receiptNumber: string
+  /**
+   * true bila email pemberitahuan SUDAH DIANTREKAN ke pelanggan (pelanggan punya alamat email).
+   * BUKAN "terkirim": email dikirim `void` setelah commit (R8), jadi hasil SMTP tidak ditunggu.
+   * Kegagalan kirim tercatat di email_logs dan bisa dikirim ulang dari panel admin.
+   */
+  mailQueued: boolean
+}

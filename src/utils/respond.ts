@@ -21,10 +21,9 @@ export const ERROR_CODES = {
   // dari "ada bug". Dipakai /api/health/deep saat DB tidak terjangkau dan
   // jalur Google OAuth saat kredensialnya belum dikonfigurasi.
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
-  // Dipakai domain nanti — didaftarkan sekarang supaya FE bisa menyiapkan penanganannya lebih awal
-  // TODO Fase 3: HOLD_LAPSED dilempar saat bukti bayar masuk setelah holdExpiresAt lewat
+  // Bukti bayar masuk setelah holdExpiresAt lewat — slot sudah kembali dijual (manual-payment-services.attachProof)
   HOLD_LAPSED: 'HOLD_LAPSED',
-  // TODO Fase 3: PENDING_TOTAL_EXHAUSTED dilempar setelah 25 percobaan kode pendingTotal gagal
+  // 25 percobaan kode unik pendingTotal habis untuk satu nominal (manual-payment-services.openTransfer, R11)
   PENDING_TOTAL_EXHAUSTED: 'PENDING_TOTAL_EXHAUSTED'
 } as const
 

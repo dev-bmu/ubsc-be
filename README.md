@@ -52,15 +52,26 @@ Catatan:
 
 ```bash
 npm run dev             # API di http://localhost:4020 (tsx watch)
-npm run worker:dev      # proses cron terpisah — kerangkanya disiapkan di Fase 0, isi job-nya di Fase 3
+npm run worker:dev      # proses cron terpisah — job payments:release-expired tiap 5 menit
 npm run build           # tsc ke dist/ + emit dist/shared/contract-hash.json
 npm start               # menjalankan dist/src/app.js (produksi)
 npm run worker          # menjalankan dist/src/worker.js (produksi)
 npm run lint            # ESLint
-npm test                # jest + supertest
+npm run typecheck       # tsc atas src/ DAN tests/ (ts-jest hanya transpile, tidak memeriksa tipe)
+npm test                # jest + supertest terhadap database ubsc_test — lihat di bawah
 npm run contract:hash   # cetak sha256 isi shared/ — pembanding manual untuk GET /api/meta/contract-hash
 npm run check:orphans   # hitung dangling reference per relasi (kompensasi relationMode "prisma", R2)
+npm run check:booking-instants   # startsAt/endsAt booking = jam Jakarta dari tanggal+jam; --fix memperbaiki
 ```
+
+Test memakai database MySQL nyata — gate konkurensi booking tidak bisa diuji dengan mock. Buat sekali:
+
+```bash
+mysql -uroot -e "CREATE DATABASE IF NOT EXISTS ubsc_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+```
+
+`npm test` menjalankan `prisma migrate deploy` ke database itu lalu **mengosongkan seluruh tabelnya**. Nama database
+wajib berakhiran `_test` (dijaga `tests/test-database.ts`); ganti lokasinya lewat `TEST_DATABASE_URL`.
 
 Cek cepat bahwa API hidup:
 

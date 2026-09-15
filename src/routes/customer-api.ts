@@ -2,6 +2,8 @@ import express from 'express'
 import { customerAuthRequired } from '../middleware/auth-middleware'
 import { UserRequest } from '../type/user-request'
 import { ok } from '../utils/respond'
+import customerBookingRoutes from './details/customer-booking'
+import customerPaymentRoutes from './details/customer-payments'
 
 // ===== Router customer (ubsportcenter.co.id) =====
 // authRequired dipasang SEKALI di level router, bukan per baris route.
@@ -27,8 +29,12 @@ customerRouter.get('/api/customer/me', (req, res) => {
   })
 })
 
-// TODO Fase 6: area customer — /api/customer/bookings (riwayat + detail),
-// /api/customer/bookings/:id/payment (buka transfer, unggah bukti 10 MB),
-// /api/customer/identity (unggah dokumen + status verifikasi),
-// /api/customer/reviews, /api/customer/profile, /api/customer/memberships.
-// POST /api/customer/booking (12 langkah, Fase 3) juga masuk di sini.
+// Booking (riwayat, buat, instruksi transfer, unggah bukti) — Fase 3.
+customerRouter.use('/api/customer/booking', customerBookingRoutes)
+
+// Berkas bukti transfer milik pelanggan — Fase 3.
+customerRouter.use('/api/customer/payments', customerPaymentRoutes)
+
+// TODO Fase 6: /api/customer/transactions (JSON dashboard), /api/customer/profile,
+// /api/customer/profile/identity (unggah dokumen + status verifikasi),
+// /api/customer/reviews, /api/customer/memberships.

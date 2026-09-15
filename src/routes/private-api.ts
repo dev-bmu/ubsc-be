@@ -2,6 +2,7 @@ import express from 'express'
 import { staffAuthRequired } from '../middleware/auth-middleware'
 import { UserRequest } from '../type/user-request'
 import { ok } from '../utils/respond'
+import adminPaymentRoutes from './details/admin-payments'
 
 // ===== Router staff (dash.ubsportcenter.co.id) =====
 // authRequired dipasang SEKALI di level router. Middleware-nya diikat ke prefix
@@ -26,6 +27,10 @@ privateRouter.get('/api/admin/me', (req, res) => {
     permissions: permissions ?? []
   })
 })
+
+// Keputusan pembayaran (approve/reject) + berkas bukti — Fase 3. Antrean
+// verifikasi dan pengaturan rekening menyusul di Fase 8 pada router yang sama.
+privateRouter.use('/api/admin/payments', adminPaymentRoutes)
 
 // ============================================================================
 // === URUTAN ROUTE YANG WAJIB DIPERTAHANKAN (Fase 3, 6, 8) ===

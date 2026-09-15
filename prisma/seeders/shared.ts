@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, statSync } from 'fs'
 import { dirname, extname, join, resolve } from 'path'
 import { PrismaClient } from '@prisma/client'
 import { PrismaMariaDb } from '@prisma/adapter-mariadb'
+import { dateOnlyToString, jakartaWallTimeToUtc } from '../../src/utils/clock'
 
 // ============================================================================
 // === Infrastruktur bersama untuk seluruh seeder ===
@@ -96,10 +97,14 @@ export function dateOnly(value: string | Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
 }
 
-/** Gabungkan tanggal + "HH:mm" menjadi DateTime, untuk Booking.startsAt/endsAt. */
+/**
+ * Gabungkan tanggal kalender + jam dinding JAKARTA menjadi instan UTC, untuk Booking.startsAt/endsAt.
+ *
+ * Versi Fase 1 memakai Date.UTC(jam) langsung — jam Jakarta dibaca sebagai jam UTC, sehingga setiap
+ * startsAt/endsAt demo bergeser 7 jam ke depan. Sekarang lewat satu implementasi yang sama dengan API.
+ */
 export function combineDateTime(date: Date, time: string): Date {
-  const [hour, minute] = time.split(':').map(Number)
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour, minute, 0, 0))
+  return jakartaWallTimeToUtc(dateOnlyToString(date), time)
 }
 
 // ===== Media =====

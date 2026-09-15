@@ -131,7 +131,35 @@ function writePreview(input: MailInput, messageId: string): string {
  * Mengembalikan id baris email_logs supaya pemanggil bisa merujuknya bila
  * perlu; id-nya null hanya bila pencatatan log itu sendiri gagal.
  */
-export async function sendMailSafe(input: MailInput): Promise<string | null> {
+export function sendMailSafe(input: MailInput): Promise<string | null> {
+  const delivery = deliver(input)
+  pending.add(delivery)
+  void delivery.finally(() => pending.delete(delivery))
+  return delivery
+}
+
+/**
+ * Kiriman `void` yang masih berjalan. Kiriman itu sengaja HIDUP LEBIH LAMA dari request-nya, jadi
+ * drain HTTP saat shutdown tidak menunggunya — tanpa daftar ini, $disconnect memotong kiriman di
+ * tengah jalan dan baris email_logs-nya tertinggal 'pending' atau salah tercatat gagal.
+ */
+const pending = new Set<Promise<string | null>>()
+
+/**
+ * Tunggu kiriman yang masih berjalan, dengan batas waktu. true bila semua selesai. Dipanggil app.ts
+ * setelah drain HTTP dan SEBELUM pool database ditutup; juga oleh test sebelum $disconnect.
+ */
+export async function waitForPendingMail(timeoutMs: number): Promise<boolean> {
+  if (pending.size === 0) return true
+  const settled = Promise.allSettled(Array.from(pending)).then(() => true)
+  const timedOut = new Promise<boolean>((done) => {
+    const timer = setTimeout(() => done(false), timeoutMs)
+    timer.unref()
+  })
+  return Promise.race([settled, timedOut])
+}
+
+async function deliver(input: MailInput): Promise<string | null> {
   let logId: string | null = null
 
   try {

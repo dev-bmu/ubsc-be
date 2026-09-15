@@ -1,5 +1,6 @@
 import { MAIL_FROM_NAME } from '../config'
-import { formatRupiah } from '../../shared/format'
+import { translatedDate } from './clock'
+import { rupiahPlain } from './money'
 import type { MailInput } from './mailer'
 
 // ============================================================================
@@ -15,7 +16,6 @@ import type { MailInput } from './mailer'
 // spam.
 
 const BRAND = '#0B1E3B' // navy-900, sama dengan palet landing
-const ACCENT = '#D50000'
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -27,6 +27,8 @@ interface LayoutInput {
   ctaLabel?: string
   ctaUrl?: string
   footerNote?: string
+  /** true bila isi email mengajak membalas; baris "mohon tidak membalas" di kaki dihilangkan. */
+  replyable?: boolean
 }
 
 function layout(input: LayoutInput): string {
@@ -53,7 +55,7 @@ function layout(input: LayoutInput): string {
   ${button}
   ${footerNote}
   <tr><td style="padding-top:24px;border-top:1px solid #e6e8ec;color:#8b93a1;font-size:12px;line-height:18px">
-    Email ini dikirim otomatis oleh ${escapeHtml(MAIL_FROM_NAME)}. Mohon tidak membalas email ini.
+    Email ini dikirim otomatis oleh ${escapeHtml(MAIL_FROM_NAME)}.${input.replyable ? '' : ' Mohon tidak membalas email ini.'}
   </td></tr>
 </table>
 </body></html>`
@@ -104,66 +106,100 @@ export function resetPasswordTemplate(input: { to: string; name: string; url: st
 }
 
 // ===== 3. Pembayaran disetujui =====
-// Dipakai ManualPayment.approve() di Fase 3.
+// Isi mengikuti app/Mail/PaymentApproved.php + emails/payment-approved.blade.php kata per kata.
+// Dikirim setelah approve() commit (payment-verification-services).
+
+interface MailBooking {
+  facilityName: string
+  unitName?: string | null
+  /** "YYYY-MM-DD" */
+  date: string
+  startTime: string
+  endTime: string
+}
+
+/** Carbon translatedFormat('l, d F Y') + "HH:mm – HH:mm", sama dengan kedua Mailable Laravel. */
+function bookingWhen(booking: MailBooking): { date: string; time: string } {
+  return { date: translatedDate(booking.date, 'l, d F Y'), time: `${booking.startTime.slice(0, 5)} – ${booking.endTime.slice(0, 5)}` }
+}
 
 export function paymentApprovedTemplate(input: {
   to: string
-  name: string
   receiptNumber: string
+  /** Nominal booking TANPA kode unik — Laravel memakai $transaction->amount. */
   amount: number
-  description: string
-  url?: string
+  booking: (MailBooking & { url: string }) | null
 }): MailInput {
-  const heading = 'Pembayaran Anda telah dikonfirmasi'
-  const body = `Halo ${escapeHtml(input.name)},<br><br>
-    Pembayaran Anda sudah kami terima dan diverifikasi.<br><br>
-    <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:14px;line-height:22px">
-      <tr><td style="color:#5b6472;padding-right:16px">No. Kuitansi</td><td style="font-weight:600">${escapeHtml(input.receiptNumber)}</td></tr>
-      <tr><td style="color:#5b6472;padding-right:16px">Jumlah</td><td style="font-weight:600">${escapeHtml(formatRupiah(input.amount))}</td></tr>
-      <tr><td style="color:#5b6472;padding-right:16px">Untuk</td><td style="font-weight:600">${escapeHtml(input.description)}</td></tr>
-    </table>`
+  const amount = rupiahPlain(input.amount)
+  const when = input.booking ? bookingWhen(input.booking) : null
+  const unit = input.booking?.unitName ? ` · ${escapeHtml(input.booking.unitName)}` : ''
+
+  const bookingHtml =
+    input.booking && when
+      ? `<br><br><strong>${escapeHtml(input.booking.facilityName)}</strong>${unit}<br>
+    ${escapeHtml(when.date)} · ${escapeHtml(when.time)}<br><br>
+    Saat datang, tunjukkan QR tiket di halaman reservasi kepada petugas untuk check-in.`
+      : ''
+
+  const bookingText =
+    input.booking && when
+      ? `\n\n${input.booking.facilityName}${input.booking.unitName ? ` · ${input.booking.unitName}` : ''}\n${when.date} · ${when.time}\n\nSaat datang, tunjukkan QR tiket di halaman reservasi kepada petugas untuk check-in.\n\nLihat Tiket & QR: ${input.booking.url}`
+      : ''
 
   return {
     to: input.to,
-    subject: `Pembayaran dikonfirmasi (${input.receiptNumber}) — UB Sport Center`,
+    subject: `Pembayaran ${input.receiptNumber} dikonfirmasi — UB Sport Center`,
     template: 'payment-approved',
-    html: layout({ heading, bodyHtml: body, ctaLabel: input.url ? 'Lihat Riwayat Booking' : undefined, ctaUrl: input.url }),
-    text: `Halo ${input.name},\n\nPembayaran Anda sudah kami terima dan diverifikasi.\n\nNo. Kuitansi : ${input.receiptNumber}\nJumlah       : ${formatRupiah(input.amount)}\nUntuk        : ${input.description}\n${input.url ? `\nRiwayat booking: ${input.url}\n` : ''}\n— ${MAIL_FROM_NAME}`
+    html: layout({
+      heading: 'Pembayaran dikonfirmasi',
+      bodyHtml: `Transfer untuk <strong>${escapeHtml(input.receiptNumber)}</strong> sebesar <strong>${escapeHtml(amount)}</strong> sudah kami terima dan reservasi Anda kini <strong>terkonfirmasi</strong>.${bookingHtml}`,
+      ctaLabel: input.booking ? 'Lihat Tiket & QR' : undefined,
+      ctaUrl: input.booking?.url,
+      footerNote: `Sampai jumpa di lapangan,<br>${escapeHtml(MAIL_FROM_NAME)}`
+    }),
+    text: `Pembayaran dikonfirmasi\n\nTransfer untuk ${input.receiptNumber} sebesar ${amount} sudah kami terima dan reservasi Anda kini terkonfirmasi.${bookingText}\n\nSampai jumpa di lapangan,\n${MAIL_FROM_NAME}`
   }
 }
 
-// ===== 4. Pembayaran ditolak =====
+// ===== 4. Bukti transfer ditolak =====
+// Isi mengikuti app/Mail/PaymentRejected.php + emails/payment-rejected.blade.php kata per kata.
 
 export function paymentRejectedTemplate(input: {
   to: string
-  name: string
   receiptNumber: string
-  amount: number
   reason: string
-  url?: string
+  booking: MailBooking | null
+  /** Tombol "Pesan Ulang" — halaman /booking landing. */
+  bookingUrl: string
 }): MailInput {
-  const heading = 'Pembayaran Anda belum dapat kami terima'
-  const body = `Halo ${escapeHtml(input.name)},<br><br>
-    Mohon maaf, bukti pembayaran Anda belum dapat kami verifikasi.<br><br>
-    <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:14px;line-height:22px">
-      <tr><td style="color:#5b6472;padding-right:16px">No. Kuitansi</td><td style="font-weight:600">${escapeHtml(input.receiptNumber)}</td></tr>
-      <tr><td style="color:#5b6472;padding-right:16px">Jumlah</td><td style="font-weight:600">${escapeHtml(formatRupiah(input.amount))}</td></tr>
-    </table>
-    <div style="margin-top:16px;padding:12px 16px;background:#fff5f5;border-left:3px solid ${ACCENT};color:#7a1f1f">
-      <strong>Alasan:</strong> ${escapeHtml(input.reason)}
-    </div>`
+  const when = input.booking ? bookingWhen(input.booking) : null
+
+  const bookingHtml =
+    input.booking && when
+      ? `<br><br>Reservasi <strong>${escapeHtml(input.booking.facilityName)}</strong> pada ${escapeHtml(when.date)} · ${escapeHtml(when.time)} telah dibatalkan dan slotnya dilepas kembali.`
+      : ''
+  const bookingText =
+    input.booking && when
+      ? `\n\nReservasi ${input.booking.facilityName} pada ${when.date} · ${when.time} telah dibatalkan dan slotnya dilepas kembali.`
+      : ''
+
+  const closing = 'Jika Anda yakin dana sudah terkirim, balas email ini atau hubungi kami — kami akan bantu cek mutasinya. Untuk memesan kembali:'
 
   return {
     to: input.to,
-    subject: `Pembayaran belum diterima (${input.receiptNumber}) — UB Sport Center`,
+    subject: `Bukti transfer ${input.receiptNumber} ditolak — UB Sport Center`,
     template: 'payment-rejected',
     html: layout({
-      heading,
-      bodyHtml: body,
-      ctaLabel: input.url ? 'Unggah Ulang Bukti' : undefined,
-      ctaUrl: input.url,
-      footerNote: 'Bila Anda merasa ini keliru, hubungi petugas kami di meja depan UB Sport Center.'
+      heading: 'Bukti transfer ditolak',
+      bodyHtml: `Bukti transfer untuk <strong>${escapeHtml(input.receiptNumber)}</strong> tidak dapat kami cocokkan dengan mutasi rekening.<br><br>
+    <strong>Alasan:</strong> ${escapeHtml(input.reason)}${bookingHtml}<br><br>
+    ${escapeHtml(closing)}`,
+      ctaLabel: 'Pesan Ulang',
+      ctaUrl: input.bookingUrl,
+      footerNote: `Terima kasih,<br>${escapeHtml(MAIL_FROM_NAME)}`,
+      // Email ini justru MENGAJAK pelanggan membalas — baris "mohon tidak membalas" akan membantahnya.
+      replyable: true
     }),
-    text: `Halo ${input.name},\n\nMohon maaf, bukti pembayaran Anda belum dapat kami verifikasi.\n\nNo. Kuitansi : ${input.receiptNumber}\nJumlah       : ${formatRupiah(input.amount)}\nAlasan       : ${input.reason}\n${input.url ? `\nUnggah ulang bukti: ${input.url}\n` : ''}\nBila Anda merasa ini keliru, hubungi petugas kami di meja depan.\n\n— ${MAIL_FROM_NAME}`
+    text: `Bukti transfer ditolak\n\nBukti transfer untuk ${input.receiptNumber} tidak dapat kami cocokkan dengan mutasi rekening.\n\nAlasan: ${input.reason}${bookingText}\n\n${closing}\n${input.bookingUrl}\n\nTerima kasih,\n${MAIL_FROM_NAME}`
   }
 }

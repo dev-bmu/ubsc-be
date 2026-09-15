@@ -40,6 +40,7 @@ async function bootstrap(): Promise<void> {
 
   const { web } = await import('./application/web.js')
   const { disconnectDatabase } = await import('./application/database.js')
+  const { waitForPendingMail } = await import('./utils/mailer.js')
 
   const server: Server = web.listen(env.PORT, () => {
     logger?.info(`API UBSC siap di port ${env.PORT} (${env.NODE_ENV}, TZ ${env.TZ})`)
@@ -50,7 +51,7 @@ async function bootstrap(): Promise<void> {
     process.exit(1)
   })
 
-  registerShutdown(server, disconnectDatabase, env.SHUTDOWN_TIMEOUT_MS)
+  registerShutdown(server, disconnectDatabase, waitForPendingMail, env.SHUTDOWN_TIMEOUT_MS)
 }
 
 /**
@@ -65,9 +66,17 @@ async function bootstrap(): Promise<void> {
  *   3. tunggu event 'close'    -> semua request in-flight selesai
  *   4. batas waktu terlampaui  -> closeAllConnections() memutus sisanya, daripada PM2 mengirim
  *                                 SIGKILL yang memutus semuanya tanpa menutup database
- *   5. disconnectDatabase()    -> pool ditutup TERAKHIR, setelah tidak ada lagi yang memakainya
+ *   5. waitForPendingMail()    -> email `void sendMailSafe()` sengaja hidup lebih lama dari request-nya
+ *                                 (R8), jadi drain HTTP tidak menunggunya; tanpa langkah ini email
+ *                                 keputusan pembayaran bisa terpotong dan email_logs-nya salah catat
+ *   6. disconnectDatabase()    -> pool ditutup TERAKHIR, setelah tidak ada lagi yang memakainya
  */
-function registerShutdown(server: Server, disconnectDatabase: () => Promise<void>, timeoutMs: number): void {
+function registerShutdown(
+  server: Server,
+  disconnectDatabase: () => Promise<void>,
+  waitForPendingMail: (timeoutMs: number) => Promise<boolean>,
+  timeoutMs: number
+): void {
   let shuttingDown = false
 
   const shutdown = async (signal: string): Promise<void> => {
@@ -91,6 +100,10 @@ function registerShutdown(server: Server, disconnectDatabase: () => Promise<void
 
       server.closeIdleConnections()
     })
+
+    if (!(await waitForPendingMail(timeoutMs))) {
+      logger?.warn(`Batas ${timeoutMs} ms terlampaui, email yang masih terkirim ditinggalkan (lihat email_logs)`)
+    }
 
     try {
       await disconnectDatabase()

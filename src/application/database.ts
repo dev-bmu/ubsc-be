@@ -1,6 +1,8 @@
 // ===== Koneksi Database =====
-// Prisma 7 + driver adapter MariaDB. Modul ini hanya menyiapkan client untuk proses API.
-// worker.ts SENGAJA tidak mengimpor file ini (lihat komentar di sana).
+// Prisma 7 + driver adapter MariaDB. Modul ini menyiapkan client untuk proses API.
+// Proses worker memasang client pool-1 miliknya di globalThis.prismaClient SEBELUM modul ini
+// termuat (lihat worker.ts), sehingga service yang mengimpor prismaClient di proses itu memakai
+// client worker dan pool 20 koneksi di bawah tidak pernah dibuat.
 
 import { PrismaClient } from '@prisma/client'
 import { PrismaMariaDb } from '@prisma/adapter-mariadb'
@@ -30,16 +32,14 @@ export function createAdapter(urlString: string, connectionLimit: number = DB_CO
     connectionLimit,
     idleTimeout,
     /**
-     * WAJIB eksplisit, jangan pernah dihapus.
+     * Di-pin eksplisit: arti affectedRows `$executeRaw` UPDATE tidak boleh bergantung pada default
+     * driver. `true` (CLIENT_FOUND_ROWS) = baris yang COCOK dengan WHERE; `false` = baris yang
+     * nilainya benar-benar BERUBAH.
      *
-     * Di Fase 3, `updateMany().count` dipakai sebagai compare-and-swap: attachProof dan expire
-     * melakukan conditional UPDATE lalu meng-assert `count === groupSize`. Arti angka itu
-     * bergantung pada foundRows: dengan `true` (perilaku CLIENT_FOUND_ROWS) count = baris yang
-     * COCOK dengan WHERE; dengan `false` count = baris yang nilainya benar-benar BERUBAH.
-     *
-     * Kalau default driver berubah atau berbeda antar versi, assert CAS akan gagal atau — lebih
-     * buruk — lolos padahal tidak seharusnya. Korektness booking tidak boleh bergantung pada
-     * default siapa pun, jadi di-pin di sini.
+     * JANGAN mengira ini membuat `updateMany().count` menjadi compare-and-swap. Dengan
+     * relationMode = "prisma", Prisma 7 mengompilasi updateMany menjadi SELECT id tanpa kunci lalu
+     * UPDATE ... WHERE id IN (...) tanpa syarat aslinya — count berasal dari SELECT itu (terverifikasi
+     * Fase 3, lihat manual-payment-services.ts). Korektness pembayaran dijaga SELECT ... FOR UPDATE.
      */
     foundRows: true
   })

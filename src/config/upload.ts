@@ -3,7 +3,8 @@
 // sharp. Tidak ada logic multer di sini — itu middleware/upload-middleware.ts.
 //
 // TODO Fase 1: pakai UPLOAD_LIMITS.CMS_IMAGE dan AVATAR di upload-middleware.
-// TODO Fase 6: pakai PAYMENT_PROOF (memory storage + pipeline sharp) dan IDENTITY_DOC.
+// PAYMENT_PROOF dipakai middleware/upload-middleware.ts + payment-proof-services (Fase 3).
+// TODO Fase 6: pakai IDENTITY_DOC.
 // TODO Fase 9: VIDEO_REEL pindah ke object storage/CDN; batas di sini tetap jadi pagar terakhir.
 
 const MB = 1024 * 1024
@@ -37,7 +38,9 @@ export const UPLOAD_LIMITS = {
     maxBytes: 10 * MB,
     maxWidth: 6000,
     maxHeight: 6000,
-    mimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/heic'],
+    // Sama dengan Laravel (mimes:jpeg,jpg,png,webp). HEIC SENGAJA tidak diterima: binary prebuilt
+    // sharp tidak men-decode HEIC, jadi menerimanya hanya berarti menolak berkas setelah terunggah.
+    mimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
     storage: 'memory'
   },
   /** KTP/KTM untuk verifikasi identitas. storage/private juga. */
