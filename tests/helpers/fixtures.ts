@@ -2,6 +2,8 @@ import { rmSync } from 'fs'
 import { resolve } from 'path'
 import { IdentityCategory, IdentityStatus, Prisma } from '@prisma/client'
 import { prismaClient } from '../../src/application/database'
+import { approve } from '../../src/services/manual-payment-services'
+import { createMembership, CreateMembershipInput } from '../../src/services/membership-services'
 import { UserWithRelations } from '../../src/type/user-request'
 import { dateOnly, jakartaWallTimeToUtc, setNowForTests } from '../../src/utils/clock'
 import { signAccessToken, TokenAudience } from '../../src/utils/jwt'
@@ -38,6 +40,7 @@ export async function resetDatabase(): Promise<void> {
   for (const table of tables) await prismaClient.$executeRawUnsafe(`TRUNCATE TABLE \`${table.name}\``)
 
   rmSync(resolve(process.cwd(), process.env.PRIVATE_STORAGE_DIR as string), { recursive: true, force: true })
+  rmSync(resolve(process.cwd(), process.env.UPLOAD_DIR as string), { recursive: true, force: true })
 }
 
 export async function closeDatabase(): Promise<void> {
@@ -76,6 +79,18 @@ export async function createStaff(roleName: string): Promise<UserWithRelations> 
     data: { name: `Staff ${roleName}`, email: `${unique('staff')}@test.ubsc.id`, emailVerifiedAt: new Date(), roleId: role.id },
     include: { role: true }
   })
+}
+
+/**
+ * Membership meja depan yang sudah dibayar: dibuat (menunggu pembayaran) lalu ditandai lunas, persis
+ * alur FO sejak catatan client 2026-09-28. Tanggal mulai yang sudah lewat digeser ke hari lunas
+ * (activatePendingMembership), jadi test yang butuh tanggal pasti memakai tanggal jam beku atau sesudahnya.
+ */
+export async function createPaidMembership(input: CreateMembershipInput) {
+  const membership = await createMembership(input)
+  const transaction = await prismaClient.transaction.findUniqueOrThrow({ where: { membershipId: membership.id } })
+  if (transaction.paymentStatus === 'UNPAID') await approve(transaction.id, (await createStaff('Staff Front Office')).id)
+  return prismaClient.membership.findUniqueOrThrow({ where: { id: membership.id } })
 }
 
 export function bearer(user: UserWithRelations, audience: TokenAudience): string {

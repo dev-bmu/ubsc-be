@@ -48,6 +48,18 @@ export async function releaseExpiredPayments(): Promise<number> {
     released++
   }
 
-  logger.info(`payments:release-expired melepas ${released} hold booking yang kedaluwarsa`)
+  // Membership yang dibeli online: hold-nya ada di transaksi (expiresAt), bukan di baris booking.
+  // expire() memeriksa ulang di bawah kunci — transfer yang buktinya sudah masuk dilewati.
+  const expiredMembershipTransfers = await prismaClient.transaction.findMany({
+    where: { membershipId: { not: null }, paymentStatus: 'UNPAID', verificationStatus: null, expiresAt: { not: null, lte: at } },
+    select: { id: true },
+    orderBy: { expiresAt: 'asc' },
+    take: BATCH_SIZE
+  })
+  for (const transaction of expiredMembershipTransfers) {
+    if (await expire(transaction.id)) released++
+  }
+
+  logger.info(`payments:release-expired melepas ${released} hold (booking + membership) yang kedaluwarsa`)
   return released
 }

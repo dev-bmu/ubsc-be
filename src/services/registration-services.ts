@@ -1,5 +1,6 @@
 import { Response } from 'express'
 import bcrypt from 'bcryptjs'
+import type { ResendVerificationDto } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
 import { LANDING_URL } from '../config'
 import { ResponseError } from '../error/response-error'
@@ -110,16 +111,24 @@ export const verifyEmailAuth = async (request: unknown) => {
   })
 
   if (!stored) throw new ResponseError(400, 'Tautan verifikasi tidak valid', 'VALIDATION_ERROR')
-  if (stored.usedAt) throw new ResponseError(400, 'Tautan verifikasi sudah pernah dipakai', 'VALIDATION_ERROR')
-  if (stored.expiresAt < new Date()) {
-    throw new ResponseError(400, 'Tautan verifikasi sudah kedaluwarsa. Minta tautan baru.', 'VALIDATION_ERROR')
+
+  // Sudah terverifikasi (tautan ini diklik dua kali, tautan dari email lama, Google OAuth, atau reset
+  // password): anggap sukses, jangan menampilkan error yang membingungkan. Dicek SEBELUM usedAt,
+  // karena kirim ulang menandai tautan lama "terpakai" juga.
+  if (stored.user.emailVerifiedAt) {
+    if (!stored.usedAt) await prismaClient.emailVerificationToken.update({ where: { id: stored.id }, data: { usedAt: new Date() } })
+    return { verified: true, email: stored.user.email }
   }
 
-  // Sudah terverifikasi lewat jalur lain (mis. Google OAuth): tandai tokennya
-  // terpakai dan anggap sukses, jangan menampilkan error yang membingungkan.
-  if (stored.user.emailVerifiedAt) {
-    await prismaClient.emailVerificationToken.update({ where: { id: stored.id }, data: { usedAt: new Date() } })
-    return { verified: true, email: stored.user.email }
+  if (stored.usedAt) {
+    throw new ResponseError(
+      400,
+      'Tautan verifikasi ini sudah tidak berlaku. Pakai tautan di email terbaru, atau minta tautan baru.',
+      'VALIDATION_ERROR'
+    )
+  }
+  if (stored.expiresAt < new Date()) {
+    throw new ResponseError(400, 'Tautan verifikasi sudah kedaluwarsa. Minta tautan baru.', 'VALIDATION_ERROR')
   }
 
   await prismaClient.$transaction(async (tx) => {
@@ -142,29 +151,65 @@ export const verifyEmailAuth = async (request: unknown) => {
 
 const GENERIC_SENT_MESSAGE = 'Bila email tersebut terdaftar, kami sudah mengirim tautan ke kotak masuk Anda.'
 
+/**
+ * Jeda antar-email satu akun dan batas per 24 jam — supaya SMTP tidak dihujani. Berlaku untuk kirim
+ * ulang verifikasi DAN lupa password (dua form yang bisa diklik berulang oleh siapa pun).
+ */
+export const MAIL_RESEND_COOLDOWN_SECONDS = 60
+export const MAIL_RESEND_MAX_PER_DAY = 5
+
+const DAY_MS = 24 * 3600 * 1000
+
+/**
+ * Terbitkan token baru dan kirim email verifikasi, kecuali ditahan jeda atau batas harian. Setiap
+ * kiriman sudah meninggalkan satu baris email_verification_tokens (createdAt), jadi tabel itu sekaligus
+ * log kirimannya — tanpa kolom baru. Baris users dikunci supaya dua klik bersamaan tidak sama-sama
+ * lolos cek jeda. Satu-satunya jalan kirim ulang: publik, pelanggan login, dan staff.
+ */
+export async function issueVerification(userId: string): Promise<ResendVerificationDto> {
+  const outcome = await prismaClient.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { name: true, email: true, emailVerifiedAt: true } })
+    if (!user || user.emailVerifiedAt) return { sent: false, retryAfterSeconds: 0, alreadyVerified: true }
+
+    const nowMs = Date.now()
+    const recent = await tx.emailVerificationToken.findMany({
+      where: { userId, createdAt: { gte: new Date(nowMs - DAY_MS) } },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true }
+    })
+    const cooldown = recent[0] ? Math.ceil((recent[0].createdAt.getTime() + MAIL_RESEND_COOLDOWN_SECONDS * 1000 - nowMs) / 1000) : 0
+    if (cooldown > 0) return { sent: false, retryAfterSeconds: cooldown, alreadyVerified: false }
+    if (recent.length >= MAIL_RESEND_MAX_PER_DAY) {
+      // Kuota kembali saat kiriman tertua di jendela 24 jam keluar dari jendela itu.
+      const reopensAt = recent[recent.length - 1].createdAt.getTime() + DAY_MS
+      return { sent: false, retryAfterSeconds: Math.max(1, Math.ceil((reopensAt - nowMs) / 1000)), alreadyVerified: false }
+    }
+
+    const tokenPlain = createRefreshToken()
+    // Cabut token lama supaya hanya tautan terbaru yang berlaku.
+    await tx.emailVerificationToken.updateMany({ where: { userId, usedAt: null }, data: { usedAt: new Date() } })
+    await tx.emailVerificationToken.create({
+      data: { userId, tokenHash: hashToken(tokenPlain), expiresAt: new Date(nowMs + VERIFY_TOKEN_TTL_HOURS * 3600 * 1000) }
+    })
+    return { sent: true, retryAfterSeconds: MAIL_RESEND_COOLDOWN_SECONDS, alreadyVerified: false, mail: { ...user, tokenPlain } }
+  })
+
+  if ('mail' in outcome && outcome.mail) {
+    const { email, name, tokenPlain } = outcome.mail
+    void sendMailSafe(verifyEmailTemplate({ to: email, name, url: verifyUrl(tokenPlain), expiresInHours: VERIFY_TOKEN_TTL_HOURS }))
+  }
+  return { sent: outcome.sent, retryAfterSeconds: outcome.retryAfterSeconds, alreadyVerified: outcome.alreadyVerified }
+}
+
 export const resendVerificationAuth = async (request: unknown) => {
   const validated = Validation.validate(AuthValidation.RESEND_VERIFICATION, request)
 
-  const user = await prismaClient.user.findUnique({
-    where: { email: validated.email },
-    select: { id: true, name: true, email: true, emailVerifiedAt: true }
-  })
+  const user = await prismaClient.user.findUnique({ where: { email: validated.email }, select: { id: true, emailVerifiedAt: true } })
 
-  // Balasan sama persis untuk email tidak terdaftar dan email yang sudah
-  // terverifikasi. Keduanya pulang tanpa mengirim apa pun.
-  if (!user || user.emailVerifiedAt) return { message: GENERIC_SENT_MESSAGE }
-
-  const tokenPlain = createRefreshToken()
-
-  await prismaClient.$transaction(async (tx) => {
-    // Cabut token lama supaya hanya tautan terbaru yang berlaku.
-    await tx.emailVerificationToken.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } })
-    await tx.emailVerificationToken.create({
-      data: { userId: user.id, tokenHash: hashToken(tokenPlain), expiresAt: new Date(Date.now() + VERIFY_TOKEN_TTL_HOURS * 3600 * 1000) }
-    })
-  })
-
-  void sendMailSafe(verifyEmailTemplate({ to: user.email, name: user.name, url: verifyUrl(tokenPlain), expiresInHours: VERIFY_TOKEN_TTL_HOURS }))
+  // Balasan sama persis untuk email tidak terdaftar, sudah terverifikasi, dan yang ditahan jeda —
+  // ketiganya pulang tanpa membocorkan apa pun.
+  if (user && !user.emailVerifiedAt) await issueVerification(user.id)
 
   return { message: GENERIC_SENT_MESSAGE }
 }
@@ -187,15 +232,33 @@ export const forgotPasswordAuth = async (request: unknown) => {
 
   const tokenPlain = createRefreshToken()
 
-  await prismaClient.$transaction(async (tx) => {
+  const issued = await prismaClient.$transaction(async (tx) => {
+    // Jeda + batas harian per akun, sama dengan kirim ulang verifikasi. Baris users dikunci supaya dua
+    // klik bersamaan tidak sama-sama lolos. Yang ditahan tetap dibalas pesan generik (anti-enumerasi).
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`
+    const recent = await tx.passwordResetToken.findMany({
+      where: { userId: user.id, createdAt: { gte: new Date(Date.now() - DAY_MS) } },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true }
+    })
+    if (recent[0] && Date.now() - recent[0].createdAt.getTime() < MAIL_RESEND_COOLDOWN_SECONDS * 1000) return false
+    if (recent.length >= MAIL_RESEND_MAX_PER_DAY) return false
+
     // Satu tautan aktif per user: permintaan baru membatalkan yang lama.
     await tx.passwordResetToken.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } })
     await tx.passwordResetToken.create({
       data: { userId: user.id, tokenHash: hashToken(tokenPlain), expiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000) }
     })
+    return true
   })
 
-  void sendMailSafe(resetPasswordTemplate({ to: user.email, name: user.name, url: resetUrl(tokenPlain), expiresInMinutes: RESET_TOKEN_TTL_MINUTES }))
+  if (issued) {
+    void sendMailSafe(
+      resetPasswordTemplate({ to: user.email, name: user.name, url: resetUrl(tokenPlain), expiresInMinutes: RESET_TOKEN_TTL_MINUTES })
+    )
+  } else {
+    logger.info(`forgot-password untuk ${validated.email} ditahan jeda/batas harian`)
+  }
 
   return { message: GENERIC_SENT_MESSAGE }
 }
@@ -230,6 +293,9 @@ export const resetPasswordAuth = async (request: unknown) => {
       // biasanya orang yang sama.
       data: { password: passwordHash, failedLogins: 0, isLocked: false }
     })
+    // Tautan reset sampai lewat email itu sendiri, jadi kepemilikannya sudah terbukti. Ini jalan masuk
+    // akun yang dibuat FO di meja depan (tanpa password): cukup "Lupa password", tanpa verifikasi kedua.
+    await tx.user.updateMany({ where: { id: stored.userId, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date() } })
     await tx.passwordResetToken.update({ where: { id: stored.id }, data: { usedAt: new Date() } })
 
     // Cabut SELURUH sesi di KEDUA audience. Kalau password diganti karena akun

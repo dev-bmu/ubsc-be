@@ -8,7 +8,7 @@ import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import cookieParser from 'cookie-parser'
-import { ADMIN_URL, LANDING_URL, UPLOAD_DIR } from '../config'
+import { ADMIN_URL, LANDING_URL, MEDIA_DIR, UPLOAD_DIR } from '../config'
 import { requestIdMiddleware } from '../middleware/request-id-middleware'
 import { publicRouter } from '../routes/public-api'
 import { customerRouter } from '../routes/customer-api'
@@ -55,6 +55,17 @@ web.use(requestIdMiddleware)
 // Di produksi mount ini tidak terpakai: nginx menerminasi /uploads sendiri.
 // storage/private TIDAK pernah di-mount di sini, dan itu disengaja.
 web.use('/uploads', express.static(path.resolve(process.cwd(), UPLOAD_DIR), { index: false, dotfiles: 'ignore', maxAge: '7d' }))
+
+// Direktori media bersama (R9): video reel dan aset berat yang sengaja tidak ikut git, dipindahkan dengan
+// ops/scripts/sync-media.sh. Dipisahkan dari /uploads karena isinya beda sifat — /uploads berisi unggahan
+// user yang lahir dan mati bersama baris tabel `media`, /media berisi aset build yang dikelola manifest.
+//
+// Seperti /uploads, mount ini hanya jalur DEV: di produksi nginx menerminasi /media langsung dari
+// /srv/ubsc/media dan permintaan tidak pernah sampai ke proses Node (docs/media.md).
+//
+// maxAge 1 tahun, bukan 7 hari: isi direktori ini immutable — berkas tidak pernah ditulis ulang di tempat,
+// perubahan selalu berupa nama baru plus baris manifest baru. Itu justru syarat yang dituntut CDN.
+web.use('/media', express.static(path.resolve(process.cwd(), MEDIA_DIR), { index: false, dotfiles: 'ignore', maxAge: '365d', immutable: true }))
 
 web.use(cors(corsOptions))
 web.use(cookieParser())

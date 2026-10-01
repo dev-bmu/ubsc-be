@@ -1,8 +1,11 @@
+import { readdirSync } from 'fs'
+import { resolve } from 'path'
 import sharp from 'sharp'
 import request from 'supertest'
 import { prismaClient } from '../src/application/database'
 import { web } from '../src/application/web'
 import { setNowForTests } from '../src/utils/clock'
+import { waitForPendingMail } from '../src/utils/mailer'
 import {
   bearer,
   closeDatabase,
@@ -85,8 +88,9 @@ describe('pelanggan', () => {
       bank: { bank: 'BCA', accountNumber: '1234567890' },
       ticket: null
     })
-    const { uniqueCode, total, receiptNumber } = payment.body.data.payment
-    expect(total).toBe(250_000 + uniqueCode)
+    const { adminFee, uniqueCode, total, receiptNumber } = payment.body.data.payment
+    expect(adminFee).toBe(500)
+    expect(total).toBe(250_000 + adminFee + uniqueCode)
     expect(receiptNumber).toMatch(/^UBSC-\d{6}$/)
 
     // 3. Unggah bukti.
@@ -245,5 +249,97 @@ describe('pelanggan', () => {
       .expect(200)
     const slots = await request(web).get('/api/public/booking/slots').query({ facilityId, date: '2026-10-09' }).expect(200)
     expect(slots.body.data.slots.find((s: { startTime: string }) => s.startTime === '10:00').status).toBe('available')
+  })
+})
+
+describe('foto member lewat HTTP (tahap B)', () => {
+  it('pelanggan mengunggah field photo; staff ber-identity.verify meninjau, Finance tidak', async () => {
+    const customer = await createCustomer()
+    const auth = bearer(customer, 'customer')
+
+    const uploaded = await request(web)
+      .post('/api/customer/member-photo')
+      .set('Authorization', auth)
+      .attach('photo', await png(), { filename: 'wajah.png', contentType: 'image/png' })
+      .expect(200)
+    const { memberPhotoUrl } = uploaded.body.data
+    expect(uploaded.body.data.memberPhotoStatus).toBe('pending')
+
+    const profile = await request(web).get('/api/customer/profile').set('Authorization', auth).expect(200)
+    expect(profile.body.data).toMatchObject({
+      memberPhotoUrl,
+      memberPhotoStatus: 'pending',
+      customerNumber: expect.stringMatching(/^UB-[0-9A-Z]{4}-[0-9A-Z]{4}$/)
+    })
+    // Disajikan mount /uploads, tanpa auth — FO menampilkannya langsung.
+    await request(web).get(memberPhotoUrl).expect(200)
+
+    const frontOffice = bearer(await createStaff('Staff Front Office'), 'staff')
+    const queue = await request(web).get('/api/admin/identity/member-photos').set('Authorization', frontOffice).expect(200)
+    expect(queue.body.data.users.find((user: { id: string }) => user.id === customer.id)).toMatchObject({
+      photoUrl: memberPhotoUrl,
+      status: 'pending'
+    })
+
+    const decision = { status: 'approved', photoUrl: memberPhotoUrl }
+    const finance = bearer(await createStaff('Finance'), 'staff')
+    await request(web).patch(`/api/admin/identity/${customer.id}/member-photo`).set('Authorization', finance).send(decision).expect(403)
+    const decided = await request(web)
+      .patch(`/api/admin/identity/${customer.id}/member-photo`)
+      .set('Authorization', frontOffice)
+      .send(decision)
+      .expect(200)
+    expect(decided.body.data.status).toBe('approved')
+  })
+})
+
+describe('checkout membership lewat HTTP (tahap C)', () => {
+  it('pratinjau -> checkout -> instruksi transfer -> unggah bukti -> masuk antrean staff', async () => {
+    const customer = await createCustomer()
+    const auth = bearer(customer, 'customer')
+    const plan = await prismaClient.membershipPlan.create({ data: { name: 'Gym HTTP', price: 150_000, durationMonths: 1 } })
+
+    await request(web)
+      .post('/api/customer/member-photo')
+      .set('Authorization', auth)
+      .attach('photo', await png(), { filename: 'wajah.png', contentType: 'image/png' })
+      .expect(200)
+
+    const preview = await request(web).get(`/api/customer/memberships/checkout/${plan.id}`).set('Authorization', auth).expect(200)
+    expect(preview.body.data).toMatchObject({ amount: 150_000, adminFee: 500, pendingMembershipId: null })
+
+    const created = await request(web).post('/api/customer/memberships').set('Authorization', auth).send({ membershipPlanId: plan.id }).expect(201)
+    const { membershipId } = created.body.data
+    await request(web).post('/api/customer/memberships').set('Authorization', auth).send({ membershipPlanId: plan.id }).expect(200)
+
+    const detail = await request(web).get(`/api/customer/memberships/${membershipId}/pembayaran`).set('Authorization', auth).expect(200)
+    expect(detail.body.data).toMatchObject({
+      membership: { id: membershipId, status: 'pending_payment', planName: 'Gym HTTP' },
+      payment: { amount: 150_000, adminFee: 500, canUpload: true },
+      bank: { bank: 'BCA' }
+    })
+    await request(web)
+      .get(`/api/customer/memberships/${membershipId}/pembayaran`)
+      .set('Authorization', bearer(await createCustomer(), 'customer'))
+      .expect(404)
+
+    const uploaded = await request(web)
+      .post(`/api/customer/memberships/${membershipId}/pembayaran/bukti`)
+      .set('Authorization', auth)
+      .attach('proof', await png(), { filename: 'bukti.png', contentType: 'image/png' })
+      .expect(200)
+    expect(uploaded.body.data.payment).toMatchObject({ hasProof: true, verificationStatus: 'awaiting', canUpload: false })
+
+    const finance = bearer(await createStaff('Finance'), 'staff')
+    const queue = await request(web).get('/api/admin/payments?tab=awaiting').set('Authorization', finance).expect(200)
+    const row = queue.body.data.transactions.find((item: { subject: { plan?: string } }) => item.subject.plan === 'Gym HTTP')
+    expect(row).toMatchObject({ type: 'membership', total: 150_000 + 500 + uploaded.body.data.payment.uniqueCode })
+
+    // Disetujui: membership aktif, dan email yang terkirim adalah kartu member, bukan "reservasi terkonfirmasi".
+    await request(web).post(`/api/admin/payments/${row.id}/approve`).set('Authorization', finance).expect(200)
+    expect((await prismaClient.membership.findUniqueOrThrow({ where: { id: membershipId } })).status).toBe('active')
+    await waitForPendingMail(10_000)
+    const mails = readdirSync(resolve(process.cwd(), process.env.MAIL_PREVIEW_DIR as string))
+    expect(mails.some((name) => name.includes('__membership-active__') && name.includes(customer.email))).toBe(true)
   })
 })

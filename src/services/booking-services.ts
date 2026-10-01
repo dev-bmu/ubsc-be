@@ -27,7 +27,7 @@ import {
   translatedDate,
   weekdayOf
 } from '../utils/clock'
-import { receiptNumber, rupiahPlain, slotPriceLabel } from '../utils/money'
+import { receiptNumber, rupiahPlain, slotPriceLabel, transferTotal } from '../utils/money'
 import { withConflictRetry } from '../utils/prisma-errors'
 import { randomAlphanumeric } from '../utils/random'
 import { BookingValidation, CreateBookingInput } from '../validation/booking-validation'
@@ -98,11 +98,13 @@ async function facilityOrValidationError(facilityId: string, facilityUnitId: str
   ])
 
   const fields: Record<string, string[]> = {}
-  if (!facility) fields.facilityId = ['Fasilitas tidak ditemukan.']
+  // Fasilitas nonaktif = tidak ada bagi publik: slot dan kalendernya tidak disajikan, sama seperti daftar.
+  const usable = facility?.isActive ? facility : null
+  if (!usable) fields.facilityId = ['Fasilitas tidak ditemukan.']
   if (!unitExists) fields.facilityUnitId = ['Unit tidak valid untuk fasilitas ini.']
-  if (!facility || !unitExists) throw new ResponseError(422, Object.values(fields)[0][0], 'VALIDATION_ERROR', fields)
+  if (!usable || !unitExists) throw new ResponseError(422, Object.values(fields)[0][0], 'VALIDATION_ERROR', fields)
 
-  return facility
+  return usable
 }
 
 /**
@@ -566,7 +568,7 @@ export async function createBooking(user: UserWithRelations, request: unknown): 
       })
 
       // Satu transfer, satu kode unik, satu baris di rekening koran — digantungkan ke booking lead.
-      const transaction = await openTransfer(tx, { bookingId: leadId }, user.id, total, holdExpiresAt)
+      const transaction = await openTransfer(tx, { bookingId: leadId }, user.id, total, holdExpiresAt, priceCategory)
 
       return { bookingId: leadId, transactionId: transaction.id, holdExpiresAt: holdExpiresAt.toISOString() }
     }, TX_OPTIONS)
@@ -630,7 +632,7 @@ export async function bookingHistory(userId: string): Promise<BookingHistoryItem
       amount: t ? t.amount : sessions.reduce((sum, s) => sum + s.subtotalPrice, 0),
       paymentStatus: t?.paymentStatus ?? 'UNPAID',
       verificationStatus: t?.verificationStatus ?? null,
-      transferTotal: t ? t.amount + (t.uniqueCode ?? 0) : lead.subtotalPrice,
+      transferTotal: t ? transferTotal(t) : lead.subtotalPrice,
       hasPayment: t !== null,
       holdExpiresAt: lead.holdExpiresAt?.toISOString() ?? null,
       hasTicket: t?.paymentStatus === 'PAID' && (lead.status === 'confirmed' || lead.status === 'completed'),

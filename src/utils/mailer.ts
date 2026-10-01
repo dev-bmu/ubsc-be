@@ -21,10 +21,14 @@ import { logger } from './logger'
 // ============================================================================
 // Empat sifat yang di-port dari Laravel dan TIDAK boleh hilang:
 //
-//  1. Port 465 dengan TLS implisit, bukan 587. Alasannya didokumentasikan di
-//     .env.example Laravel: di 587, handshake STARTTLS tidak dibatasi socket
-//     timeout, dan handshake yang macet menggantung request sampai prosesnya
-//     dimatikan.
+//  1. Default port 465 dengan TLS implisit. Alasan Laravel (.env.example-nya):
+//     di 587, handshake STARTTLS tidak dibatasi socket timeout, dan handshake
+//     yang macet menggantung request. Di sini risiko itu sudah ditutup
+//     socketTimeout + kiriman di luar request (butir 2-4), jadi 587 boleh
+//     dipakai bila jaringan memblokir 465 — ditemukan 2026-09-28: jaringan dev
+//     memblokir 465 lewat IPv4, sedangkan nodemailer selalu memakai IPv4.
+//     Di 587 STARTTLS DIWAJIBKAN (requireTLS), supaya login tidak pernah
+//     terkirim polos bila STARTTLS dilucuti di tengah jalan.
 //  2. Kirim SETELAH transaksi bisnis commit. Setiap penulisan sudah permanen
 //     sebelum email berangkat, jadi kegagalan SMTP tidak pernah muncul sebagai
 //     500 setelah pembayaran benar-benar disetujui.
@@ -41,7 +45,7 @@ import { logger } from './logger'
 // kiriman gagal dari panel admin. Pengganti murah untuk queue, dan cukup pada
 // volume ini.
 
-export type MailTemplate = 'verify-email' | 'reset-password' | 'payment-approved' | 'payment-rejected'
+export type MailTemplate = 'verify-email' | 'reset-password' | 'payment-approved' | 'payment-rejected' | 'membership-active' | 'membership-invoice'
 
 export interface MailInput {
   to: string
@@ -59,9 +63,10 @@ function getTransporter(): Transporter {
   transporter = nodemailer.createTransport({
     host: MAIL_HOST,
     port: MAIL_PORT,
-    // true = TLS implisit sejak byte pertama (port 465). Jangan diubah ke
-    // false + STARTTLS tanpa membaca alasan nomor 1 di atas.
+    // true = TLS implisit sejak byte pertama (port 465). false = port 587
+    // dengan STARTTLS wajib (requireTLS) — lihat alasan nomor 1 di atas.
     secure: MAIL_SECURE,
+    requireTLS: !MAIL_SECURE,
     auth: MAIL_USER && MAIL_PASSWORD ? { user: MAIL_USER, pass: MAIL_PASSWORD } : undefined,
     // Tiga batas terpisah: koneksi TCP, greeting SMTP, dan socket idle. Tanpa
     // ketiganya, server yang menerima koneksi lalu diam akan menggantung

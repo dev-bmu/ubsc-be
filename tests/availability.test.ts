@@ -173,6 +173,15 @@ describe('waktu dan jadwal', () => {
     expect(stored.startsAt.toISOString()).toBe('2026-10-06T00:00:00.000Z')
   })
 
+  it('fasilitas nonaktif tidak menyajikan slot maupun kalender', async () => {
+    const facility = await createFacility({ capacity: 1, isActive: false })
+    await expect(getSlots({ facilityId: facility.id, date: '2026-10-10' })).rejects.toMatchObject({
+      status: 422,
+      fields: { facilityId: [expect.any(String)] }
+    })
+    await expect(getMonth({ facilityId: facility.id, month: '2026-10' })).rejects.toMatchObject({ status: 422 })
+  })
+
   it('bulan belum dibuka dan tanggal tutup', async () => {
     const facility = await createFacility({ capacity: 1 })
     await openMonth(2026, 11, ['2026-11-10', '2026-12-01', 'bukan-tanggal'])

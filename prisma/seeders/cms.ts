@@ -207,8 +207,26 @@ export async function seedReels() {
   let mediaCreated = 0
   let mediaMissing = 0
 
-  for (const item of REELS) {
-    const reel = await prisma.reel.create({ data: { title: item.title, isActive: true } })
+  // PRESISI TIMESTAMP — bukan kosmetik, ini yang menentukan urutan kartu ReelsSection.
+  //
+  // Laravel `timestamps()` menulis DATETIME presisi DETIK, jadi kelima reel hasil seeder jatuh pada detik
+  // yang SAMA PERSIS. Pada `Reel::active()->latest()` (= ORDER BY created_at DESC) seluruhnya seri, dan
+  // MySQL mengembalikan baris seri dalam urutan PK auto-increment menaik — sehingga Laravel merender
+  // reel 1, 2, 3, 4, 5. Diverifikasi ke database `ubsc`: kelimanya bernilai '2026-09-09 13:01:29'.
+  //
+  // Prisma memetakan DateTime ke DATETIME(3). Tanpa createdAt eksplisit, tiap baris mendapat milidetik
+  // yang berbeda, tidak ada lagi seri, dan `DESC` mengembalikannya TERBALIK: 5, 4, 3, 2, 1.
+  //
+  // Menyamakan createdAt kelimanya TIDAK menyelesaikan masalah — pada seri penuh, urutan yang tersisa
+  // ditentukan PK, dan PK di sini uuid v4 yang acak. Jadi timestamp diberikan MENURUN sesuai urutan
+  // REELS: elemen pertama paling baru, sehingga `ORDER BY createdAt DESC` menghasilkan 1, 2, 3, 4, 5 —
+  // urutan render Laravel, secara deterministik.
+  const reelBase = new Date()
+
+  for (const [index, item] of REELS.entries()) {
+    const reel = await prisma.reel.create({
+      data: { title: item.title, isActive: true, createdAt: new Date(reelBase.getTime() - index * 1000) }
+    })
     created++
 
     for (const media of [

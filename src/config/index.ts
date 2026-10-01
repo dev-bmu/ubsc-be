@@ -14,6 +14,7 @@ export type { Env } from './env'
 
 // ===== Server =====
 export const { NODE_ENV, PORT, TZ, API_BASE_URL, LANDING_URL, ADMIN_URL, SHUTDOWN_TIMEOUT_MS } = env
+export const { LANDING_REVALIDATE_URL, LANDING_REVALIDATE_SECRET } = env
 
 /** Shortcut yang dipakai di banyak tempat; lebih sulit salah ketik daripada perbandingan string. */
 export const IS_PRODUCTION = env.NODE_ENV === 'production'
@@ -37,7 +38,7 @@ export const {
 } = env
 
 // ===== Upload, storage, log =====
-export const { UPLOAD_DIR, PRIVATE_STORAGE_DIR, LOG_DIR } = env
+export const { UPLOAD_DIR, PRIVATE_STORAGE_DIR, MEDIA_DIR, LOG_DIR } = env
 
 // ===== Mail =====
 export const {

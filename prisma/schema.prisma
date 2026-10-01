@@ -100,6 +100,16 @@ enum MembershipStatus {
   active
   expired
   cancelled
+  // Dibeli online, transfernya belum diverifikasi. Ikut menahan periode (cek overlap), belum memberi
+  // akses, aktif saat transfer disetujui, dan batal sendiri bila transfernya kedaluwarsa atau ditolak.
+  // Ditaruh terakhir: menambah nilai di ujung ENUM MySQL tidak membangun ulang tabel.
+  pending_payment
+}
+
+enum MemberPhotoStatus {
+  pending
+  approved
+  rejected
 }
 
 enum IdentityStatus {
@@ -203,6 +213,28 @@ model User {
   identityFilePath String?
   identityStatus   IdentityStatus    @default(unverified)
 
+  // ===== Nomor pelanggan =====
+  // Kunci nomor member. Yang tampil bukan angka ini melainkan permutasinya, 'UB-7K3F-92QX'
+  // (customerNumber() di utils/money.ts), supaya tidak berurutan. Auto-increment berdampingan dengan PK
+  // uuid, pola yang sama dengan Transaction.receiptSequence: terbit sekali saat akun dibuat, tidak
+  // pernah berubah, tidak pernah dipakai ulang. Menempel pada ORANG, bukan pada Membership —
+  // perpanjangan membuat baris Membership baru, dan kartu yang nomornya berganti tiap perpanjangan
+  // tidak bisa dipakai. Akun staff ikut mendapat nomor; tidak dipakai di mana pun.
+  customerSequence Int @unique @default(autoincrement())
+
+  // ID pelanggan di Accurate, tampil 'WEB.0001' (accurateCustomerId()). Terpisah dari nomor member atas
+  // permintaan client. Terbit saat pelanggan pertama kali masuk export faktur Accurate, jadi counternya
+  // hanya berisi pelanggan yang benar-benar punya penjualan (accurate-export-services.ts).
+  accurateSequence Int? @unique
+
+  // ===== Foto member (validasi wajah di meja gym) =====
+  // BUKAN avatar: avatar opsional, boleh kartun, dan untuk akun Google berisi URL Google. Foto ini
+  // harus wajah asli dan baru berlaku setelah disetujui staff. Nilainya URL ber-root
+  // '/uploads/members/<uuid>.webp': FO harus bisa menampilkannya seketika, jadi tidak privat seperti
+  // KTP, tapi namanya acak dan tidak ada halaman publik yang menautkannya.
+  memberPhotoPath   String?
+  memberPhotoStatus MemberPhotoStatus?
+
   googleId String? @unique
 
   createdAt DateTime @default(now())
@@ -222,11 +254,14 @@ model User {
   transactions       Transaction[]           @relation("TransactionCustomer")
   verifiedPayments   Transaction[]           @relation("TransactionVerifiedBy")
   reviews            Review[]
+  gymVisits          GymVisit[]              @relation("GymVisitMember")
+  gymCheckIns        GymVisit[]              @relation("GymVisitStaff")
   authoredNews       News[]
   sessionExceptions  ClassSessionException[]
 
   @@index([roleId])
   @@index([identityStatus])
+  @@index([memberPhotoStatus])
   @@map("users")
 }
 
@@ -305,7 +340,7 @@ model EmailLog {
   id        String    @id @default(uuid())
   toEmail   String
   subject   String
-  template  String // verify-email | reset-password | payment-approved | payment-rejected
+  template  String // verify-email | reset-password | payment-approved | payment-rejected | membership-active | membership-invoice
   status    String    @default("pending") // pending | sent | failed
   attempts  Int       @default(0)
   lastError String?   @db.Text
@@ -332,10 +367,16 @@ model NotificationState {
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   notificationId String
   fingerprint    String
+  // Laravel menyimpan DUA himpunan terpisah di session: 'read' dan 'dismissed'.
+  // Satu baris per (user, notificationId) tidak cukup untuk membedakannya, jadi
+  // kolom ini yang memisahkan — dan kuncinya ikut memakainya (lihat @@unique).
+  // Item bisa berstatus read tanpa pernah dismissed; dismissed berarti hilang
+  // dari daftar sampai sidik jarinya berubah.
+  state          String   @default("read") @db.VarChar(16)
   createdAt      DateTime @default(now())
 
-  @@unique([userId, notificationId])
-  @@index([userId])
+  @@unique([userId, notificationId, state])
+  @@index([userId, state])
   @@map("notification_states")
 }
 
@@ -384,6 +425,11 @@ model Facility {
   slotQuotas  Json?
   sessionNote String? @db.VarChar(160)
   classCode   String?
+
+  // Kolom ITEM:ITEM NO di export faktur Accurate — harus sama persis dengan nomor barang/jasa di Accurate.
+  // Accurate memakai nomor item berbeda per tarif (catatan client 2026-09-28): umum dan Warga UB.
+  accurateItemNo      String? @db.VarChar(30)
+  accurateItemNoWarga String? @db.VarChar(30)
 
   rating          Float   @default(5.0)
   displayMetadata Json?
@@ -611,11 +657,16 @@ model MembershipPlan {
   ctaLabel     String? @db.VarChar(80)
   cardImageUrl String?
 
-  price          Int
-  durationMonths Int
-  features       Json?
-  isActive       Boolean @default(true)
-  sortOrder      Int     @default(0)
+  price               Int
+  // Harga untuk Warga UB yang identitasnya terverifikasi (priceCategoryFor). NULL = sama dengan price.
+  wargaPrice          Int?
+  // Nomor barang/jasa di Accurate untuk export faktur, per tarif (sama seperti Facility).
+  accurateItemNo      String? @db.VarChar(30)
+  accurateItemNoWarga String? @db.VarChar(30)
+  durationMonths      Int
+  features            Json?
+  isActive            Boolean @default(true)
+  sortOrder           Int     @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -653,6 +704,7 @@ model Membership {
   histories   MembershipHistory[] @relation("MembershipHistoryMembership")
   renewalLogs MembershipHistory[] @relation("MembershipHistoryRenewedFrom")
   transaction Transaction?
+  gymVisits   GymVisit[]
 
   // Mendukung pencegahan overlap: satu user tidak boleh punya dua membership
   // aktif yang rentangnya bertumpuk. Ditegakkan lewat lock + cek di service,
@@ -724,13 +776,25 @@ model Transaction {
   membershipId String?     @unique
   membership   Membership? @relation(fields: [membershipId], references: [id])
 
+  // Harga fasilitas / paket saja. Laporan per fasilitas & per paket menjumlahkan kolom ini,
+  // jadi biaya admin TIDAK dilebur ke sini (lihat adminFee).
   amount Int
   method String @default("manual") @db.VarChar(16)
 
-  // Kode unik 3 digit yang ditambahkan ke nominal supaya transfer bisa
-  // dicocokkan otomatis. pendingTotal = amount + uniqueCode, dan @unique-nya
-  // adalah MEKANISME KOREKTNESS, bukan optimasi: dua checkout bersamaan akan
-  // membaca kode bebas yang sama, jadi keunikan dijamin indeks lewat
+  // Biaya admin (setting payment_admin_fee), disalin saat transaksi dibuka supaya
+  // mengubah setting tidak mengubah nominal transfer yang sudah dilihat pelanggan.
+  // Default 0: transaksi sebelum fitur ini tetap bernominal sama.
+  adminFee Int @default(0)
+
+  // Tarif yang BENAR-BENAR dipakai saat transaksi dibuat — menentukan nomor item Accurate (umum vs
+  // Warga UB). Warga UB tanpa harga warga di paket membership membayar harga umum = 'umum'. Walk-in FO
+  // selalu 'umum'. Baris lama diisi migrasi 20260928120000 secara perkiraan.
+  priceCategory UserCategory @default(umum)
+
+  // Kode unik (1..payment_unique_code_max) yang ditambahkan ke nominal supaya
+  // transfer bisa dicocokkan. pendingTotal = amount + adminFee + uniqueCode, dan
+  // @unique-nya adalah MEKANISME KOREKTNESS, bukan optimasi: dua checkout bersamaan
+  // akan membaca kode bebas yang sama, jadi keunikan dijamin indeks lewat
   // coba-insert-dan-tangkap-P2002, bukan lewat pre-check.
   uniqueCode   Int?
   pendingTotal Int? @unique
@@ -758,6 +822,46 @@ model Transaction {
   @@index([verificationStatus, proofUploadedAt])
   @@index([verifiedById])
   @@map("transactions")
+}
+
+// ============================================================================
+// === KUNJUNGAN GYM (PRD tambahan 2026-09, tahap D) ===
+// ============================================================================
+// Satu baris = satu kali member masuk gym, dicatat FO di meja check-in. Tanpa check-out (keputusan
+// client), jadi yang terukur adalah KEDATANGAN per jam, bukan orang di dalam.
+
+model GymVisit {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation("GymVisitMember", fields: [userId], references: [id])
+
+  // Membership yang berlaku saat check-in (snapshot): perpanjangan membuat baris membership baru.
+  membershipId String
+  membership   Membership @relation(fields: [membershipId], references: [id])
+
+  // Tanggal WIB — kolom yang menegakkan batas harian. "Hari ini di WIB" tidak bisa di-index dari
+  // instan UTC tanpa fungsi tanggal (pola yang sama dengan Booking.startsAt yang didenormalisasi).
+  visitDate   DateTime @db.Date
+  // Instan UTC — sumber analitik per jam.
+  checkedInAt DateTime
+
+  // null = akun staff pencatatnya sudah dihapus (pola yang sama dengan Booking.checkedInById).
+  checkedInById String?
+  checkedInBy   User?   @relation("GymVisitStaff", fields: [checkedInById], references: [id])
+
+  source         String  @db.VarChar(16) // scan | manual
+  // Melewati batas harian atas izin FO; alasannya wajib dan ikut tercatat.
+  isOverride     Boolean @default(false)
+  overrideReason String? @db.VarChar(120)
+
+  createdAt DateTime @default(now())
+
+  @@index([visitDate])
+  @@index([userId, visitDate])
+  @@index([checkedInAt])
+  @@index([membershipId])
+  @@index([checkedInById])
+  @@map("gym_visits")
 }
 
 // ============================================================================

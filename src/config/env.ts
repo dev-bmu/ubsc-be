@@ -76,6 +76,14 @@ const envSchema = z.object({
   LANDING_URL: urlEnv('http://localhost:3000'),
   /** Origin ubsc-admin. */
   ADMIN_URL: urlEnv('http://localhost:3001'),
+  /**
+   * Route revalidasi ubsc-landing (POST /revalidate), dipanggil setelah admin mengubah fasilitas, paket,
+   * atau konten beranda supaya halaman ISR langsung segar. Kosong = nonaktif: halaman menyegarkan diri
+   * sendiri dalam 2-10 menit. Di produksi arahkan ke port Next langsung, bukan lewat nginx.
+   */
+  LANDING_REVALIDATE_URL: optionalString(),
+  /** Rahasia bersama dengan REVALIDATE_SECRET di ubsc-landing. */
+  LANDING_REVALIDATE_SECRET: optionalString(),
   /** Batas waktu drain saat SIGTERM sebelum sisa koneksi/job diputus paksa. */
   SHUTDOWN_TIMEOUT_MS: numberEnv(10000, 1000, 60000),
 
@@ -129,6 +137,14 @@ const envSchema = z.object({
   UPLOAD_DIR: stringEnv('uploads'),
   /** TIDAK pernah di-mount. Bukti bayar dan dokumen identitas. */
   PRIVATE_STORAGE_DIR: stringEnv('storage/private'),
+  /**
+   * Direktori media bersama (R9) — video reel dan aset berat lain yang SENGAJA tidak ikut git.
+   * Isinya dipindahkan dengan ops/scripts/sync-media.sh dan diverifikasi lewat ops/media-manifest.txt;
+   * default-nya harus sama dengan default MEDIA_DIR di skrip itu, yaitu <root-repo>/../ubsc-media.
+   * Di-mount publik lewat express.static('/media') HANYA untuk dev — di produksi nginx menerminasi
+   * /media langsung dari /srv/ubsc/media, persis seperti /uploads (docs/media.md).
+   */
+  MEDIA_DIR: stringEnv('../ubsc-media'),
   LOG_DIR: stringEnv('logs'),
 
   // ----- Mail -----

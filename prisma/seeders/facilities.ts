@@ -46,7 +46,10 @@ const CLASSES: FacilitySeed[] = [
   { name: 'Zumba', classCode: 'Class 002', image: 'fasilitas-zumba-ub-sport-center.avif', sortOrder: 7, isActive: true },
   { name: 'Aerobik', classCode: 'Class 003', image: 'fasilitas-aerobik-ub-sport-center.avif', sortOrder: 8, isActive: true },
   { name: 'BMU Karate', classCode: 'Class 004', image: 'fasilitas-beladiri-ub-sport-center.avif', sortOrder: 9, isActive: true },
-  { name: 'Zona Akurasi', classCode: 'Class 005', image: 'fasilitas-zona-akurasi-ub-sport-center.avif', sortOrder: 10, isActive: true },
+  // isActive FALSE, mengikuti database Laravel (`ubsc`.facilities: is_active=0), bukan menebak dari
+  // adanya berkas gambar. Zona Akurasi yang aktif memunculkan satu kartu fasilitas ekstra di SectionFour
+  // dan SectionSix yang tidak pernah dirender Laravel — sama kelasnya dengan Pilates di baris berikutnya.
+  { name: 'Zona Akurasi', classCode: 'Class 005', image: 'fasilitas-zona-akurasi-ub-sport-center.avif', sortOrder: 10, isActive: false },
   { name: 'Pilates', classCode: 'Class 006', image: 'comingsoon.avif', sortOrder: 11, isActive: false }
 ].map((item) => ({
   ...item,

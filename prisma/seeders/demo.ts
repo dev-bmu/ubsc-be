@@ -76,10 +76,18 @@ export async function seedReviews() {
   console.log('Review (demo)')
   let created = 0
 
-  for (const review of REVIEWS) {
+  // createdAt eksplisit dan MENURUN — alasan lengkapnya di seedReels (prisma/seeders/cms.ts).
+  // Ringkasnya: Laravel menulis timestamp presisi detik sehingga seluruh batch seri dan MySQL
+  // mengurutkannya menurut PK auto-increment menaik, sedangkan DATETIME(3) Prisma memberi tiap baris
+  // milidetik berbeda sehingga `Review::approved()->latest()` mengembalikannya terbalik. Diverifikasi ke
+  // database `ubsc`: kedua review yang approved bernilai '2026-09-09 13:01:29' dan Laravel merender
+  // Ahmad Farid lebih dulu, baru Budi Santoso.
+  const reviewBase = new Date()
+
+  for (const [index, review] of REVIEWS.entries()) {
     const existing = await prisma.review.findFirst({ where: { reviewerName: review.reviewerName }, select: { id: true } })
     if (existing) continue
-    await prisma.review.create({ data: review })
+    await prisma.review.create({ data: { ...review, createdAt: new Date(reviewBase.getTime() - index * 1000) } })
     created++
   }
 

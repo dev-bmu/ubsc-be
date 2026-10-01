@@ -145,3 +145,23 @@ export const proofUploadLimiter = createLimiter('proof-upload', {
   windowSeconds: 60,
   message: 'Terlalu banyak unggahan. Coba lagi dalam satu menit.'
 })
+
+/**
+ * Pengajuan identitas warga kampus — `throttle:5,1` Laravel (routes/web.php:250).
+ *
+ * Instance TERSENDIRI, bukan passwordLimiter yang kebetulan juga 5/menit: express-rate-limit
+ * menghitung per instance, jadi berbagi instance berarti pengajuan identitas ikut menghabiskan
+ * jatah lupa-password dan kirim-ulang-verifikasi milik orang yang sama.
+ */
+export const identityLimiter = createLimiter('identity', {
+  max: 5,
+  windowSeconds: 60,
+  message: 'Terlalu banyak pengajuan identitas. Coba lagi dalam satu menit.'
+})
+
+/** Unggah foto member — instance sendiri dengan alasan yang sama seperti identityLimiter. */
+export const memberPhotoLimiter = createLimiter('member-photo', {
+  max: 5,
+  windowSeconds: 60,
+  message: 'Terlalu banyak unggahan foto. Coba lagi dalam satu menit.'
+})

@@ -20,6 +20,10 @@ export const UPLOAD_LIMITS = {
   /** Gambar konten CMS (berita, banner, galeri fasilitas). */
   CMS_IMAGE: {
     maxBytes: 5 * MB,
+    // Pagar dimensi terhadap decompression bomb — file 5 MB bisa mekar jadi ratusan MB piksel di
+    // memori sharp sebelum di-resize. Sama besar dengan PAYMENT_PROOF; gambar sungguhan CMS jauh di bawah.
+    maxWidth: 6000,
+    maxHeight: 6000,
     mimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
     storage: 'memory'
   },
@@ -43,13 +47,31 @@ export const UPLOAD_LIMITS = {
     mimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
     storage: 'memory'
   },
+  /**
+   * Foto wajah member untuk validasi di meja gym. Publik di uploads/members (nama acak). Batasnya sama
+   * dengan bukti transfer karena sumbernya sama: kamera HP, yang JPEG-nya sering 3–6 MB.
+   */
+  MEMBER_PHOTO: {
+    maxBytes: 10 * MB,
+    maxWidth: 6000,
+    maxHeight: 6000,
+    mimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    storage: 'memory'
+  },
   /** KTP/KTM untuk verifikasi identitas. storage/private juga. */
   IDENTITY_DOC: {
     maxBytes: 4 * MB,
     mimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
     storage: 'memory'
   },
-  /** Video reel landing. Satu-satunya yang pakai disk storage — 100 MB di memori tidak masuk akal. */
+  /**
+   * Video reel landing. Satu-satunya yang pakai disk storage — 100 MB di memori tidak masuk akal.
+   *
+   * 100 MB di sini adalah PAGAR INFRA (Rewrite.md), BUKAN batas yang berlaku. Laravel memvalidasi
+   * `max:51200` = 50 MB, dan itulah yang mengikat: route unggah reel memakai REEL_VIDEO_MAX_BYTES
+   * (50 MB) di `services/cms-card-admin-services.ts`, baik sebagai limits.fileSize multer maupun
+   * pagar ulang di storePublicVideo. Jangan menaikkan batas efektif lewat berkas ini.
+   */
   VIDEO_REEL: {
     maxBytes: 100 * MB,
     mimeTypes: ['video/mp4', 'video/webm'],

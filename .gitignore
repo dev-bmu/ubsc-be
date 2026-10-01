@@ -43,8 +43,9 @@ storage/private/**
 storage/mail-preview/
 
 # ===== Keluaran test =====
-# tests/setup-env.ts mengarahkan bukti bayar dan .eml test ke sini, terpisah dari data dev.
+# tests/setup-env.ts mengarahkan bukti bayar, foto member, dan .eml test ke sini, terpisah dari data dev.
 storage/test-private/
+storage/test-uploads/
 storage/test-mail-preview/
 
 # ===== OS & editor =====

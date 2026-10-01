@@ -2,7 +2,7 @@ import type { PaymentDecisionDto } from '../../shared/contracts'
 import { LANDING_URL } from '../config'
 import { receiptNumber } from '../utils/money'
 import { sendMailSafe } from '../utils/mailer'
-import { paymentApprovedTemplate, paymentRejectedTemplate } from '../utils/mail-templates'
+import { membershipActiveTemplate, paymentApprovedTemplate, paymentRejectedTemplate } from '../utils/mail-templates'
 import { PaymentValidation } from '../validation/payment-validation'
 import { Validation } from '../validation/Validation'
 import { approve, PaymentDecision, reject } from './manual-payment-services'
@@ -17,6 +17,9 @@ import { approve, PaymentDecision, reject } from './manual-payment-services'
 
 const landing = (path: string) => `${LANDING_URL.replace(/\/+$/, '')}${path}`
 
+/** Beranda landing membuka modal Membership Gym (kartu) untuk ?kartu=1 setelah login. */
+export const MEMBERSHIP_CARD_PATH = '/?kartu=1'
+
 function decisionDto(decision: PaymentDecision, mailQueued: boolean): PaymentDecisionDto {
   return { transactionId: decision.transactionId, receiptNumber: receiptNumber(decision.receiptSequence), mailQueued }
 }
@@ -26,12 +29,27 @@ export async function approvePayment(transactionId: string, staffId: string): Pr
   const decision = await approve(transactionId, staffId)
 
   const email = decision.customer.email
-  if (email) {
+  const membership = decision.membership
+  if (email && membership?.customerNumber) {
+    // Membership online: email "reservasi terkonfirmasi" tidak cocok — kirim kartu member-nya.
+    void sendMailSafe(
+      membershipActiveTemplate({
+        to: email,
+        name: decision.customer.name ?? 'Member',
+        planName: membership.planName,
+        startDate: membership.startDate,
+        endDate: membership.endDate,
+        customerNumber: membership.customerNumber,
+        payment: { receiptNumber: receiptNumber(decision.receiptSequence), total: decision.total },
+        cardUrl: landing(MEMBERSHIP_CARD_PATH)
+      })
+    )
+  } else if (email) {
     void sendMailSafe(
       paymentApprovedTemplate({
         to: email,
         receiptNumber: receiptNumber(decision.receiptSequence),
-        amount: decision.amount,
+        amount: decision.total,
         booking: decision.booking ? { ...decision.booking, url: landing(`/booking/${decision.booking.id}/pembayaran`) } : null
       })
     )
@@ -53,7 +71,8 @@ export async function rejectPayment(transactionId: string, staffId: string, requ
         receiptNumber: receiptNumber(decision.receiptSequence),
         reason: decision.rejectionReason ?? '-',
         booking: decision.booking,
-        bookingUrl: landing('/booking')
+        // Membership yang ditolak dibeli ulang dari halaman paket, bukan dari /booking.
+        bookingUrl: landing(decision.membership ? '/pricing' : '/booking')
       })
     )
   }

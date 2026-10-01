@@ -3,7 +3,12 @@ import { customerAuthRequired } from '../middleware/auth-middleware'
 import { UserRequest } from '../type/user-request'
 import { ok } from '../utils/respond'
 import customerBookingRoutes from './details/customer-booking'
+import customerMembershipRoutes from './details/customer-memberships'
 import customerPaymentRoutes from './details/customer-payments'
+import customerPendingPaymentRoutes from './details/customer-pending-payment'
+import customerProfileRoutes from './details/customer-profile'
+import customerReviewRoutes from './details/customer-reviews'
+import customerTransactionRoutes from './details/customer-transactions'
 
 // ===== Router customer (ubsportcenter.co.id) =====
 // authRequired dipasang SEKALI di level router, bukan per baris route.
@@ -29,12 +34,22 @@ customerRouter.get('/api/customer/me', (req, res) => {
   })
 })
 
+// Profil, password, pengajuan identitas, hapus akun — Fase 6. Di-mount pada '/api/customer' polos
+// karena path-nya tersebar ('/profile', '/password', '/identity'); ketiganya tidak beririsan dengan
+// prefix di bawah dan request yang tidak cocok jatuh lewat next().
+customerRouter.use('/api/customer', customerProfileRoutes)
+
 // Booking (riwayat, buat, instruksi transfer, unggah bukti) — Fase 3.
 customerRouter.use('/api/customer/booking', customerBookingRoutes)
 
 // Berkas bukti transfer milik pelanggan — Fase 3.
 customerRouter.use('/api/customer/payments', customerPaymentRoutes)
 
-// TODO Fase 6: /api/customer/transactions (JSON dashboard), /api/customer/profile,
-// /api/customer/profile/identity (unggah dokumen + status verifikasi),
-// /api/customer/reviews, /api/customer/memberships.
+// Checkout membership lewat web (PRD tambahan 2026-09, tahap C).
+customerRouter.use('/api/customer/memberships', customerMembershipRoutes)
+
+// Daftar transaksi (modal riwayat pembayaran) + ulasan — Fase 6. Prefix literal berbeda, tidak saling
+// menelan maupun bentrok dengan /me, /booking, /payments.
+customerRouter.use('/api/customer/transactions', customerTransactionRoutes)
+customerRouter.use('/api/customer/reviews', customerReviewRoutes)
+customerRouter.use('/api/customer/pending-payment', customerPendingPaymentRoutes)

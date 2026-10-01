@@ -1,9 +1,10 @@
-import type { BookingSessionDto, PaymentDetailDto, PaymentRedirectDto } from '../../shared/contracts'
+import { Transaction } from '@prisma/client'
+import type { BookingSessionDto, PaymentDetailDto, PaymentRedirectDto, TransferPaymentDto } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
 import { ADMIN_URL } from '../config'
 import { ResponseError } from '../error/response-error'
 import { dateOnlyToString, formatInstant, now, translatedDate } from '../utils/clock'
-import { receiptNumber } from '../utils/money'
+import { receiptNumber, transferTotal } from '../utils/money'
 import { attachProof, bankAccount } from './manual-payment-services'
 import { deletePrivateFile, privateFileExists, proofMimeFor, resolvePrivate, storePaymentProof } from './payment-proof-services'
 
@@ -52,6 +53,23 @@ function canUpload(booking: LeadWithPayment): boolean {
   return true
 }
 
+/** Blok pembayaran transfer — sama persis untuk halaman bayar booking dan membership. */
+export function presentTransferPayment(transaction: Transaction, uploadAllowed: boolean): TransferPaymentDto {
+  return {
+    receiptNumber: receiptNumber(transaction.receiptSequence),
+    amount: transaction.amount,
+    adminFee: transaction.adminFee,
+    uniqueCode: transaction.uniqueCode ?? 0,
+    total: transferTotal(transaction),
+    paymentStatus: transaction.paymentStatus,
+    verificationStatus: transaction.verificationStatus,
+    rejectionReason: transaction.rejectionReason,
+    proofUploadedAt: transaction.proofUploadedAt?.toISOString() ?? null,
+    hasProof: Boolean(transaction.proofPath),
+    canUpload: uploadAllowed
+  }
+}
+
 async function presentPayment(booking: LeadWithPayment): Promise<PaymentDetailDto> {
   const transaction = booking.transaction
   if (!transaction) throw new ResponseError(404, 'Pembayaran tidak ditemukan')
@@ -88,18 +106,7 @@ async function presentPayment(booking: LeadWithPayment): Promise<PaymentDetailDt
       status: booking.status,
       holdExpiresAt: booking.holdExpiresAt?.toISOString() ?? null
     },
-    payment: {
-      receiptNumber: receiptNumber(transaction.receiptSequence),
-      amount: transaction.amount,
-      uniqueCode: transaction.uniqueCode ?? 0,
-      total: transaction.amount + (transaction.uniqueCode ?? 0),
-      paymentStatus: transaction.paymentStatus,
-      verificationStatus: transaction.verificationStatus,
-      rejectionReason: transaction.rejectionReason,
-      proofUploadedAt: transaction.proofUploadedAt?.toISOString() ?? null,
-      hasProof: Boolean(transaction.proofPath),
-      canUpload: canUpload(booking)
-    },
+    payment: presentTransferPayment(transaction, canUpload(booking)),
     bank: await bankAccount(),
     // Tiket baru ada setelah uang dikonfirmasi; sebelum itu QR hanya jadi cara masuk tanpa bayar.
     ticket:

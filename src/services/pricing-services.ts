@@ -175,3 +175,19 @@ interface PricedUser {
 export function priceCategoryFor(user: PricedUser | null | undefined): UserCategory {
   return user && user.identityCategory === 'warga_kampus' && user.identityStatus === 'verified' ? 'warga_ub' : 'umum'
 }
+
+/**
+ * Harga paket membership untuk satu kategori: Warga UB terverifikasi memakai wargaPrice bila paket
+ * mengaturnya, selain itu harga umum. Dipakai meja depan dan checkout web supaya keduanya sepakat.
+ */
+export function membershipPriceFor(plan: { price: number; wargaPrice: number | null }, category: UserCategory): number {
+  return category === 'warga_ub' && plan.wargaPrice !== null ? plan.wargaPrice : plan.price
+}
+
+/**
+ * Tarif yang BENAR-BENAR dipakai membership — dicatat di transaksi untuk nomor item Accurate. Warga UB
+ * pada paket tanpa harga warga (atau membership manual tanpa paket) membayar harga umum = 'umum'.
+ */
+export function membershipTariffCategory(plan: { wargaPrice: number | null } | null, category: UserCategory): UserCategory {
+  return plan && category === 'warga_ub' && plan.wargaPrice !== null ? 'warga_ub' : 'umum'
+}

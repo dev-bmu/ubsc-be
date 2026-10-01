@@ -1,6 +1,6 @@
 // ===== PM2 — empat proses UBSC dari satu berkas =====
 //
-// Berkas ini BARU DIPAKAI DI FASE 10 (Deploy). Di Fase 0 keberadaannya hanya membekukan bentuknya:
+// Dipakai di Fase 10 (Deploy, docs/fase-10.md). Di Fase 0 keberadaannya hanya membekukan bentuknya:
 // nama proses, urutan, dan variabel lingkungan yang wajib ada di setiap proses. Jangan jalankan di
 // mesin pengembangan — di dev setiap aplikasi dijalankan sendiri lewat `npm run dev`.
 //
@@ -12,8 +12,7 @@
 //   landing  Next 15, situs publik ubsportcenter.co.id                   :3000
 //   admin    Next 15, panel staff dash.ubsportcenter.co.id               :3001
 //
-// TODO Fase 10: sesuaikan seluruh `cwd` di bawah dengan lokasi checkout sebenarnya di VPS.
-// Nilai sekarang hanyalah konvensi (/var/www/<nama-repo>) dan hampir pasti perlu diubah.
+// Lokasi checkout di VPS (docs/fase-10.md): /var/www/ubsc/<nama-repo>. Ubah ketiga `cwd` bila berbeda.
 //
 // Catatan nginx: /api dan /uploads DITERMINASI DI NGINX, bukan diteruskan Next. Proses landing dan
 // admin tidak pernah menerima request ke kedua path itu di produksi — `rewrites()` di next.config.ts
@@ -61,7 +60,7 @@ module.exports = {
     // ===== API =====
     {
       name: 'ubsc-api',
-      cwd: '/var/www/ubsc-api',
+      cwd: '/var/www/ubsc/ubsc-api',
       script: 'dist/src/app.js',
       ...sharedProcess,
       // Keluar dari Express butuh waktu: SIGTERM men-drain koneksi dulu sebelum proses berhenti.
@@ -76,7 +75,7 @@ module.exports = {
     // ===== Worker cron =====
     {
       name: 'ubsc-worker',
-      cwd: '/var/www/ubsc-api',
+      cwd: '/var/www/ubsc/ubsc-api',
       script: 'dist/src/worker.js',
       ...sharedProcess,
       // Beri kesempatan job yang sedang jalan untuk selesai dan melepas named lock sebelum dibunuh.
@@ -92,7 +91,7 @@ module.exports = {
     // ===== Landing (situs publik) =====
     {
       name: 'ubsc-landing',
-      cwd: '/var/www/ubsc-landing',
+      cwd: '/var/www/ubsc/ubsc-landing',
       script: 'node_modules/next/dist/bin/next',
       args: 'start -p 3000',
       ...sharedProcess,
@@ -111,7 +110,7 @@ module.exports = {
     // ===== Admin (panel staff) =====
     {
       name: 'ubsc-admin',
-      cwd: '/var/www/ubsc-admin',
+      cwd: '/var/www/ubsc/ubsc-admin',
       script: 'node_modules/next/dist/bin/next',
       args: 'start -p 3001',
       ...sharedProcess,

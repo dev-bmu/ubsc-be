@@ -15,6 +15,8 @@ process.env.DATABASE_URL = TEST_DATABASE_URL
 process.env.TZ = 'UTC'
 
 process.env.PRIVATE_STORAGE_DIR = 'storage/test-private'
+// Foto member ditulis ke mount uploads publik — di test jangan ke uploads/ milik dev.
+process.env.UPLOAD_DIR = 'storage/test-uploads'
 process.env.MAIL_TRANSPORT = 'log'
 process.env.MAIL_PREVIEW_DIR = 'storage/test-mail-preview'
 process.env.LOG_DIR = 'logs/test'

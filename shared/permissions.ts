@@ -38,6 +38,9 @@ export const PERMISSIONS = {
   // Verifikasi
   IDENTITY_VERIFY: 'identity.verify',
 
+  // Gym (BARU, PRD tambahan 2026-09 tahap D)
+  GYM_CHECKIN: 'gym.checkin',
+
   // Sistem (BARU, tidak ada di Laravel)
   RBAC_MANAGE: 'rbac.manage',
   USERS_MANAGE: 'users.manage'
@@ -107,6 +110,12 @@ export const ALL_PERMISSIONS: PermissionDefinition[] = [
   // ===== Verifikasi =====
   { code: PERMISSIONS.IDENTITY_VERIFY, name: 'Verifikasi Identitas', description: 'Memproses antrean verifikasi identitas warga kampus' },
 
+  {
+    code: PERMISSIONS.GYM_CHECKIN,
+    name: 'Check-in Gym',
+    description: 'Mencatat kehadiran member di meja gym (termasuk mengizinkan masuk ulang dengan alasan) dan melihat analitik kunjungan'
+  },
+
   // ===== Sistem =====
   // Dua permission ini BARU dan sengaja ditambahkan. Di Laravel, RoleController::index dan
   // UserController::index tidak punya gate baca sama sekali di luar middleware role: grup
@@ -151,10 +160,11 @@ export const ROLE_PERMISSIONS: Record<StaffRoleName, PermissionCode[]> = {
     PERMISSIONS.BOOKINGS_MANAGE,
     PERMISSIONS.FACILITIES_READ,
     PERMISSIONS.CMS_MANAGE,
-    PERMISSIONS.MEMBERS_READ
+    PERMISSIONS.MEMBERS_READ,
+    PERMISSIONS.GYM_CHECKIN
   ],
 
-  'Staff Front Office': [PERMISSIONS.BOOKINGS_READ, PERMISSIONS.IDENTITY_VERIFY]
+  'Staff Front Office': [PERMISSIONS.BOOKINGS_READ, PERMISSIONS.IDENTITY_VERIFY, PERMISSIONS.GYM_CHECKIN]
 }
 
 // ===== Helper =====
