@@ -79,7 +79,7 @@ Cek cepat bahwa API hidup:
 curl http://localhost:4020/api/health
 ```
 
-Kedua aplikasi Next mem-proxy `/api/*` dan `/uploads/*` ke port ini lewat `rewrites()` di `next.config.ts`, sehingga browser selalu bicara same-origin dan cookie httpOnly bekerja tanpa CORS. **Di produksi kedua path itu diterminasi di nginx, bukan diteruskan Next.**
+Kedua aplikasi Next mem-proxy `/api/*` dan `/uploads/*` ke port ini lewat `rewrites()` di `next.config.ts`, sehingga browser selalu bicara same-origin dan cookie httpOnly bekerja tanpa CORS. Di produksi pun sama: nginx hanya meneruskan domain ke Next (docs/fase-10.md §4).
 
 ## Struktur folder
 
@@ -116,7 +116,7 @@ ubsc-api/
 │   ├── private/                 # payment-proofs/, identity/ — TIDAK pernah di-mount ke web
 │   └── mail-preview/            # keluaran MAIL_TRANSPORT=log saat pengembangan
 ├── docs/                        # fase-0.md, media.md, (runbook.md menyusul di Fase 10)
-└── ops/                         # nginx/, scripts/, ecosystem.config.js
+└── ops/                         # scripts/, ecosystem.config.js, media-manifest.txt
 ```
 
 Aturan yang tidak boleh dilanggar (diwarisi dari boilerplate `STARTER-BMU/BE`):

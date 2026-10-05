@@ -25,15 +25,15 @@ import { logger } from '../utils/logger'
 // URL. Laravel menyusunnya dari disk 'public' (APP_URL + '/storage') dan aman ABSOLUT karena Laravel
 // satu origin dengan halaman. Di arsitektur 3-repo, landing (:3000) dan API (:4020) BEDA ORIGIN saat
 // dev, dan next.config.ts SENGAJA mem-proxy '/uploads' same-origin (rewrites) supaya cookie & aset
-// selalu satu origin; di produksi nginx menerminasi '/uploads' di domain landing. Karena itu URL media
+// selalu satu origin, di dev maupun produksi. Karena itu URL media
 // harus RELATIF ('/uploads/media/<uuid>/<nama-kebab>') — URL absolut ke :4020 gagal dimuat <img> lintas
-// origin dan mem-bypass proxy. Relatif bekerja di kedua sisi (dev proxy + prod nginx).
+// origin dan mem-bypass proxy. Relatif bekerja di landing dan admin sekaligus.
 
 /**
  * Prefiks URL berkas media. Terdiri dari dua bagian yang dikunci di tempat lain dan TIDAK boleh
  * diubah sepihak di sini:
- *   - '/uploads'  -> mount express.static di application/web.ts:57 (di produksi: lokasi yang
- *                    diterminasi nginx). Sengaja literal, bukan UPLOAD_DIR: UPLOAD_DIR adalah
+ *   - '/uploads'  -> mount express.static di application/web.ts:57 (dijangkau lewat rewrite
+ *                    next.config). Sengaja literal, bukan UPLOAD_DIR: UPLOAD_DIR adalah
  *                    folder di disk, bukan path URL-nya.
  *   - 'media/<uuid>/<fileName>' -> tata letak yang ditulis attachMedia() di
  *                    prisma/seeders/shared.ts:155, dan yang wajib diikuti pipeline unggah.

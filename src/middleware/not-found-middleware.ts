@@ -10,9 +10,7 @@
 //   - /uploads disajikan express.static dan dikonsumsi <img>/<video>, bukan fetch().
 //     Berkas gambar yang hilang harus berakhir sebagai 404 kosong seperti yang
 //     diharapkan browser, bukan sebagai badan JSON yang tetap gagal di-decode sebagai
-//     gambar. Di produksi jalur itu bahkan tidak pernah sampai ke Express — nginx yang
-//     menerminasi /uploads sendiri, jadi envelope di sini hanya akan berlaku di dev dan
-//     justru membuat perilaku dev berbeda dari produksi.
+//     gambar.
 //   - Path lain (/, /favicon.ico, probe bot) bukan bagian kontrak mana pun dan tidak
 //     ada klien yang mem-parse-nya sebagai JSON.
 

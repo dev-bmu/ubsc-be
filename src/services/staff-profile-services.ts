@@ -42,7 +42,7 @@ type ProfileRow = Prisma.UserGetPayload<{ select: typeof PROFILE_SELECT }>
 
 /**
  * Prefiks URL avatar milik API ini. Dua bagian yang keduanya dikunci di tempat lain:
- *   - '/uploads' -> mount express.static di application/web.ts:57 (di produksi: diterminasi nginx).
+ *   - '/uploads' -> mount express.static di application/web.ts:57 (lewat rewrite next.config).
  *     Literal, BUKAN UPLOAD_DIR: UPLOAD_DIR adalah folder di disk, bukan path URL-nya — alasan yang
  *     sama dengan PUBLIC_URL_PREFIX di media-services.ts.
  *   - 'avatars/' -> subfolder yang ditulis storeAvatarImage() di bawah, dan SATU-SATUNYA tempat yang

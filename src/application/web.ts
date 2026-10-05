@@ -18,8 +18,9 @@ import { errorMiddleware } from '../middleware/error-middleware'
 
 export const web = express()
 
-// Di produksi nginx yang menerminasi TLS dan meneruskan X-Forwarded-*. Tanpa ini req.ip berisi IP
-// nginx, bukan IP pengunjung — dan rate limit Fase 9 jadi global, bukan per IP (R18).
+// Produksi: nginx (TLS, menulis X-Forwarded-*) -> Next (rewrites, header diteruskan apa adanya) -> API.
+// Satu hop tepercaya = proses di depan API; IP pengunjung dibaca dari X-Forwarded-For tulisan nginx.
+// Tanpa ini req.ip berisi 127.0.0.1 — dan rate limit Fase 9 jadi global, bukan per IP (R18).
 web.set('trust proxy', 1)
 
 // ===== Allowlist CORS =====
@@ -52,7 +53,7 @@ web.use(requestIdMiddleware)
 
 // Folder unggahan publik. Path di-resolve terhadap cwd proses, bukan __dirname — dist/ dan src/
 // punya kedalaman berbeda, dan path relatif __dirname pecah begitu build dijalankan.
-// Di produksi mount ini tidak terpakai: nginx menerminasi /uploads sendiri.
+// Di produksi juga dipakai: nginx meneruskan semuanya ke Next, dan Next me-rewrite /uploads ke sini.
 // storage/private TIDAK pernah di-mount di sini, dan itu disengaja.
 web.use('/uploads', express.static(path.resolve(process.cwd(), UPLOAD_DIR), { index: false, dotfiles: 'ignore', maxAge: '7d' }))
 
@@ -60,8 +61,8 @@ web.use('/uploads', express.static(path.resolve(process.cwd(), UPLOAD_DIR), { in
 // ops/scripts/sync-media.sh. Dipisahkan dari /uploads karena isinya beda sifat — /uploads berisi unggahan
 // user yang lahir dan mati bersama baris tabel `media`, /media berisi aset build yang dikelola manifest.
 //
-// Seperti /uploads, mount ini hanya jalur DEV: di produksi nginx menerminasi /media langsung dari
-// /srv/ubsc/media dan permintaan tidak pernah sampai ke proses Node (docs/media.md).
+// Mount ini jalur dev: landing me-rewrite /assets/reels/* ke sini. Di produksi landing memakai
+// NEXT_PUBLIC_MEDIA_URL (cdn.ubsportcenter.co.id) yang disajikan nginx langsung (docs/fase-10.md).
 //
 // maxAge 1 tahun, bukan 7 hari: isi direktori ini immutable — berkas tidak pernah ditulis ulang di tempat,
 // perubahan selalu berupa nama baru plus baris manifest baru. Itu justru syarat yang dituntut CDN.

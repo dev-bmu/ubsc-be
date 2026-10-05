@@ -15,7 +15,7 @@
 #
 # Parameter lewat variabel lingkungan (semua punya default):
 #   MEDIA_DIR          Direktori media lokal.        Default: <root-repo>/../ubsc-media
-#   MEDIA_REMOTE       Tujuan rsync di server.       Default: deploy@ubsportcenter.co.id:/srv/ubsc/media
+#   MEDIA_REMOTE       Tujuan rsync di server.       Default: root@ubsportcenter.co.id:/var/www/ubsc/media
 #   MANIFEST_FILE      Lokasi manifest (ikut git).   Default: <root-repo>/ops/media-manifest.txt
 #   MEDIA_DELETE       1 = teruskan --delete ke rsync supaya sisi tujuan persis sama. Default: 0
 #   MEDIA_DRY_RUN      1 = rsync --dry-run, tidak ada yang benar-benar dipindahkan. Default: 0
@@ -42,7 +42,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 
 MEDIA_DIR="${MEDIA_DIR:-$REPO_ROOT/../ubsc-media}"
-MEDIA_REMOTE="${MEDIA_REMOTE:-deploy@ubsportcenter.co.id:/srv/ubsc/media}"
+MEDIA_REMOTE="${MEDIA_REMOTE:-root@ubsportcenter.co.id:/var/www/ubsc/media}"
 MANIFEST_FILE="${MANIFEST_FILE:-$REPO_ROOT/ops/media-manifest.txt}"
 MEDIA_DELETE="${MEDIA_DELETE:-0}"
 MEDIA_DRY_RUN="${MEDIA_DRY_RUN:-0}"

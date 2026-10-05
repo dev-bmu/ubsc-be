@@ -26,7 +26,7 @@ Dua akibatnya, dan keduanya permanen kalau dibiarkan masuk git:
 | Keputusan                                   | Isi                                                                                                                                                                                                                                                                                |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Media tidak masuk git**                   | `.gitignore` di ketiga repo memblokir direktori media. Yang ikut git hanyalah aset ringan yang benar-benar bagian dari desain (ikon SVG kecil, favicon)                                                                                                                            |
-| **Disimpan di direktori bersama di server** | Satu direktori di luar ketiga checkout git, mis. `/srv/ubsc/media`. nginx melayaninya langsung; tidak ada proses Node yang ikut menyentuhnya                                                                                                                                       |
+| **Disimpan di direktori bersama di server** | Satu direktori di luar ketiga checkout git, yaitu `/var/www/ubsc/media`. nginx melayaninya langsung sebagai `cdn.ubsportcenter.co.id`; tidak ada proses Node yang ikut menyentuhnya                                                                                                                                       |
 | **Di-sync dengan rsync**                    | `ops/scripts/sync-media.sh push` dan `pull`. rsync hanya memindahkan selisihnya, jadi menambah satu gambar tidak berarti mengunggah ulang 140 MB                                                                                                                                   |
 | **Manifest ter-commit**                     | `ops/media-manifest.txt` berisi nama berkas + sha256 + ukuran untuk setiap berkas media. Berkas inilah yang ikut git, bukan medianya. Dengan begitu isi direktori media bisa **diverifikasi**: berkas hilang, berkas tambahan, dan berkas yang berubah diam-diam semuanya ketahuan |
 
@@ -37,7 +37,7 @@ pengembangan. Dengan manifest, riwayat git tetap mencatat setiap perubahan media
 ### Tata letak
 
 ```
-/srv/ubsc/media/                 # direktori bersama di server (di luar semua checkout git)
+/var/www/ubsc/media/             # direktori bersama di server (di luar semua checkout git)
 ├── reels/                       # video
 ├── hero/                        # gambar hero
 ├── images/                      # gambar konten statis

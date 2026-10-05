@@ -141,8 +141,8 @@ const envSchema = z.object({
    * Direktori media bersama (R9) — video reel dan aset berat lain yang SENGAJA tidak ikut git.
    * Isinya dipindahkan dengan ops/scripts/sync-media.sh dan diverifikasi lewat ops/media-manifest.txt;
    * default-nya harus sama dengan default MEDIA_DIR di skrip itu, yaitu <root-repo>/../ubsc-media.
-   * Di-mount publik lewat express.static('/media') HANYA untuk dev — di produksi nginx menerminasi
-   * /media langsung dari /srv/ubsc/media, persis seperti /uploads (docs/media.md).
+   * Di-mount publik lewat express.static('/media') untuk dev. Produksi: /var/www/ubsc/media, disajikan
+   * nginx sebagai cdn.ubsportcenter.co.id.
    */
   MEDIA_DIR: stringEnv('../ubsc-media'),
   LOG_DIR: stringEnv('logs'),

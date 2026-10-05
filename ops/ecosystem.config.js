@@ -7,17 +7,18 @@
 // Empat proses, sengaja dari satu berkas di repo API meskipun ketiga aplikasi punya repo terpisah:
 // urutan start, variabel lingkungan, dan aturan restart adalah satu keputusan operasional, bukan tiga.
 //
-//   api      Express 5, melayani /api dan /uploads                       :4020
+//   api      Express 5, melayani /api dan /uploads                       :4010
 //   worker   proses cron terpisah (node-cron + GET_LOCK MySQL)           tanpa port
-//   landing  Next 15, situs publik ubsportcenter.co.id                   :3000
-//   admin    Next 15, panel staff dash.ubsportcenter.co.id               :3001
+//   landing  Next 15, situs publik ubsportcenter.co.id                   :3737
+//   admin    Next 15, panel staff dash.ubsportcenter.co.id               :3010
 //
-// Lokasi checkout di VPS (docs/fase-10.md): /var/www/ubsc/<nama-repo>. Ubah ketiga `cwd` bila berbeda.
+// Lokasi checkout di VPS (docs/fase-10.md): api /var/www/ubsc/be, admin /var/www/ubsc/fe, landing
+// /var/www/apps/ubsc-landing. Video ubsc-media di /var/www/ubsc/media, disajikan nginx sebagai
+// cdn.ubsportcenter.co.id (tanpa proses Node).
 //
-// Catatan nginx: /api dan /uploads DITERMINASI DI NGINX, bukan diteruskan Next. Proses landing dan
-// admin tidak pernah menerima request ke kedua path itu di produksi — `rewrites()` di next.config.ts
-// adalah jalur dev saja. Konsekuensinya: setiap byte gambar hemat satu hop Node, dan proses Next tidak
-// ikut mati bersama API kalau API sedang di-restart.
+// Catatan nginx (docs/fase-10.md §4): tiap domain hanya `location /` ke proses Next-nya, gaya sama
+// dengan aplikasi lain di VPS. /api dan /uploads diteruskan `rewrites()` di next.config.ts ke
+// API_BASE_URL (:4010), jadi browser tetap same-origin dan cookie sesi tetap jalan.
 //
 // Catatan zona waktu (R13): TZ WAJIB ada di env SETIAP proses, dan harus disetel di level proses
 // seperti di sini — bukan lewat .env yang dibaca dotenv atau Next. Node membaca zona waktu sekali saat
@@ -60,7 +61,7 @@ module.exports = {
     // ===== API =====
     {
       name: 'ubsc-api',
-      cwd: '/var/www/ubsc/ubsc-api',
+      cwd: '/var/www/ubsc/be',
       script: 'dist/src/app.js',
       ...sharedProcess,
       // Keluar dari Express butuh waktu: SIGTERM men-drain koneksi dulu sebelum proses berhenti.
@@ -68,14 +69,14 @@ module.exports = {
       max_memory_restart: '500M',
       env: {
         ...sharedEnv,
-        PORT: 4020
+        PORT: 4010
       }
     },
 
     // ===== Worker cron =====
     {
       name: 'ubsc-worker',
-      cwd: '/var/www/ubsc/ubsc-api',
+      cwd: '/var/www/ubsc/be',
       script: 'dist/src/worker.js',
       ...sharedProcess,
       // Beri kesempatan job yang sedang jalan untuk selesai dan melepas named lock sebelum dibunuh.
@@ -91,18 +92,17 @@ module.exports = {
     // ===== Landing (situs publik) =====
     {
       name: 'ubsc-landing',
-      cwd: '/var/www/ubsc/ubsc-landing',
+      cwd: '/var/www/apps/ubsc-landing',
       script: 'node_modules/next/dist/bin/next',
-      args: 'start -p 3000',
+      args: 'start -p 3737',
       ...sharedProcess,
       max_memory_restart: '600M',
       env: {
         ...sharedEnv,
-        PORT: 3000,
-        // Dibaca next.config.ts. Di produksi nilainya praktis tidak terpakai untuk /api dan /uploads
-        // karena nginx yang menerminasi keduanya, tetapi tetap diisi supaya tidak ada jalur kode yang
-        // jatuh ke default localhost saat ada yang memanggilnya dari sisi server.
-        API_BASE_URL: 'http://127.0.0.1:4020',
+        PORT: 3737,
+        // Tujuan rewrites() /api dan /uploads. Rewrites dibekukan saat BUILD, jadi nilai yang
+        // menentukan adalah API_BASE_URL di .env.local saat `npm run build`; ini cadangan untuk sisi server.
+        API_BASE_URL: 'http://127.0.0.1:4010',
         NEXT_PUBLIC_SITE_URL: 'https://ubsportcenter.co.id'
       }
     },
@@ -110,15 +110,15 @@ module.exports = {
     // ===== Admin (panel staff) =====
     {
       name: 'ubsc-admin',
-      cwd: '/var/www/ubsc/ubsc-admin',
+      cwd: '/var/www/ubsc/fe',
       script: 'node_modules/next/dist/bin/next',
-      args: 'start -p 3001',
+      args: 'start -p 3010',
       ...sharedProcess,
       max_memory_restart: '600M',
       env: {
         ...sharedEnv,
-        PORT: 3001,
-        API_BASE_URL: 'http://127.0.0.1:4020',
+        PORT: 3010,
+        API_BASE_URL: 'http://127.0.0.1:4010',
         NEXT_PUBLIC_ADMIN_URL: 'https://dash.ubsportcenter.co.id'
       }
     }
