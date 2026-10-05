@@ -10,14 +10,10 @@
 // Nama var di file ini WAJIB sama persis dengan .env.example. Kalau menambah var, tambahkan di
 // keduanya sekaligus.
 
-import { config } from 'dotenv'
 import { z } from 'zod'
-
-// dotenv sudah dipanggil paling awal di app.ts / worker.ts. Pemanggilan kedua di sini murni
-// jaring pengaman untuk entry point lain (jest, script prisma) dan tidak menimpa var yang
-// sudah ter-set di shell. quiet: dotenv v17 mencetak banner tiap kali dipanggil, dan dua banner
-// identik tiap boot hanya menambah derau di log PM2.
-config({ quiet: true })
+// Berkas env sudah dibaca paling awal di app.ts / worker.ts. Impor di sini jaring pengaman untuk entry
+// point lain (jest, script) — modul hanya dievaluasi sekali, dan tidak menimpa var yang sudah ter-set.
+import './load-env'
 
 // ===== Helper schema =====
 
@@ -141,11 +137,25 @@ const envSchema = z.object({
    * Direktori media bersama (R9) — video reel dan aset berat lain yang SENGAJA tidak ikut git.
    * Isinya dipindahkan dengan ops/scripts/sync-media.sh dan diverifikasi lewat ops/media-manifest.txt;
    * default-nya harus sama dengan default MEDIA_DIR di skrip itu, yaitu <root-repo>/../ubsc-media.
-   * Di-mount publik lewat express.static('/media') untuk dev. Produksi: /var/www/ubsc/media, disajikan
-   * nginx sebagai cdn.ubsportcenter.co.id.
+   * Di-mount publik lewat express.static('/media') untuk dev. Produksi: bucket R2 publik (reels/),
+   * disajikan cdn.ubsportcenter.co.id.
    */
   MEDIA_DIR: stringEnv('../ubsc-media'),
   LOG_DIR: stringEnv('logs'),
+  /**
+   * Tempat berkas unggahan (src/utils/storage.ts): 'local' = UPLOAD_DIR + PRIVATE_STORAGE_DIR di disk
+   * (dev/test), 'r2' = Cloudflare R2 (produksi). Mode r2 mewajibkan keenam var R2_* (cek silang di bawah).
+   */
+  STORAGE_DRIVER: z.preprocess((value) => (isBlank(value) ? 'local' : value), z.enum(['local', 'r2'])),
+  R2_ACCOUNT_ID: optionalString(),
+  R2_ACCESS_KEY_ID: optionalString(),
+  R2_SECRET_ACCESS_KEY: optionalString(),
+  /** Bucket berkas publik (CMS, foto member, avatar, QRIS) — yang terhubung ke custom domain R2_PUBLIC_URL. */
+  R2_PUBLIC_BUCKET: optionalString(),
+  /** Bucket bukti bayar + dokumen identitas. TANPA domain publik. */
+  R2_PRIVATE_BUCKET: optionalString(),
+  /** Custom domain bucket publik, mis. https://cdn.ubsportcenter.co.id (tanpa garis miring di akhir). */
+  R2_PUBLIC_URL: optionalString(),
 
   // ----- Mail -----
   /** 'log' menulis .eml ke MAIL_PREVIEW_DIR (dev, tanpa Docker); 'smtp' mengirim sungguhan. */
@@ -198,6 +208,20 @@ function crossFieldProblems(source: NodeJS.ProcessEnv): EnvProblem[] {
   const nodeEnv = read('NODE_ENV') ?? 'development'
   const customerSecret = read('CUSTOMER_ACCESS_TOKEN_SECRET')
   const staffSecret = read('STAFF_ACCESS_TOKEN_SECRET')
+
+  if (read('STORAGE_DRIVER') === 'r2') {
+    for (const name of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_PUBLIC_BUCKET', 'R2_PRIVATE_BUCKET', 'R2_PUBLIC_URL']) {
+      if (!read(name)) problems.push({ name, message: 'wajib diisi bila STORAGE_DRIVER=r2' })
+    }
+    const publicUrl = read('R2_PUBLIC_URL')
+    if (publicUrl && !/^https:\/\/[^/]+\/?$/.test(publicUrl)) {
+      problems.push({ name: 'R2_PUBLIC_URL', message: 'harus origin https tanpa path, mis. https://cdn.ubsportcenter.co.id' })
+    }
+    // Bukti bayar dan KTP tidak boleh ikut ke bucket yang punya domain publik.
+    if (read('R2_PUBLIC_BUCKET') && read('R2_PUBLIC_BUCKET') === read('R2_PRIVATE_BUCKET')) {
+      problems.push({ name: 'R2_PRIVATE_BUCKET', message: 'harus beda dengan R2_PUBLIC_BUCKET (bucket publik punya domain terbuka)' })
+    }
+  }
 
   if (nodeEnv === 'production') {
     // R4: di produksi dua audience WAJIB punya secret sendiri. Secret yang sama membuat token

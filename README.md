@@ -35,7 +35,7 @@ Aplikasi lama yang di-rewrite: `C:/IT BMU/BMU-LANDINGPAGE/UBSC-LARAVEL` (Laravel
 ## Setup
 
 ```bash
-cp .env.example .env          # sesuaikan DATABASE_URL, semua *_SECRET, dan kredensial SMTP
+cp .env.example .env.local    # sesuaikan DATABASE_URL, semua *_SECRET, dan kredensial SMTP (.env = produksi)
 npm ci                        # WAJIB npm ci, bukan npm install — lockfile ter-commit adalah kontraknya
 npx prisma generate
 npx prisma migrate dev        # membuat tabel di database yang ditunjuk DATABASE_URL

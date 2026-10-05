@@ -65,7 +65,7 @@ export const reject: RequestHandler = async (req, res, next) => {
 
 export const proofFile: RequestHandler = async (req, res, next) => {
   try {
-    sendProofFile(res, next, await staffProofFile(String(req.params.transactionId)))
+    sendProofFile(res, await staffProofFile(String(req.params.transactionId)))
   } catch (error) {
     next(error)
   }

@@ -53,7 +53,8 @@ web.use(requestIdMiddleware)
 
 // Folder unggahan publik. Path di-resolve terhadap cwd proses, bukan __dirname — dist/ dan src/
 // punya kedalaman berbeda, dan path relatif __dirname pecah begitu build dijalankan.
-// Di produksi juga dipakai: nginx meneruskan semuanya ke Next, dan Next me-rewrite /uploads ke sini.
+// Hanya terpakai saat STORAGE_DRIVER=local (dev/test). Mode r2 (produksi) menyajikan unggahan dari
+// cdn.ubsportcenter.co.id/uploads/... langsung (utils/storage.ts).
 // storage/private TIDAK pernah di-mount di sini, dan itu disengaja.
 web.use('/uploads', express.static(path.resolve(process.cwd(), UPLOAD_DIR), { index: false, dotfiles: 'ignore', maxAge: '7d' }))
 
@@ -62,7 +63,7 @@ web.use('/uploads', express.static(path.resolve(process.cwd(), UPLOAD_DIR), { in
 // user yang lahir dan mati bersama baris tabel `media`, /media berisi aset build yang dikelola manifest.
 //
 // Mount ini jalur dev: landing me-rewrite /assets/reels/* ke sini. Di produksi landing memakai
-// NEXT_PUBLIC_MEDIA_URL (cdn.ubsportcenter.co.id) yang disajikan nginx langsung (docs/fase-10.md).
+// NEXT_PUBLIC_MEDIA_URL (cdn.ubsportcenter.co.id, bucket R2 publik) — docs/fase-10.md.
 //
 // maxAge 1 tahun, bukan 7 hari: isi direktori ini immutable — berkas tidak pernah ditulis ulang di tempat,
 // perubahan selalu berupa nama baru plus baris manifest baru. Itu justru syarat yang dituntut CDN.

@@ -1,58 +1,37 @@
 import { randomBytes } from 'crypto'
-import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'fs'
-import { dirname, isAbsolute, relative, resolve, sep } from 'path'
 import sharp from 'sharp'
-import { PRIVATE_STORAGE_DIR } from '../config'
 import { IMAGE_PIPELINE, UPLOAD_LIMITS } from '../config/upload'
 import { ResponseError } from '../error/response-error'
 import { logger } from '../utils/logger'
+import { deleteObjects, putObject, readObject } from '../utils/storage'
 
 // ============================================================================
 // === Bukti transfer — port dari app/Support/PaymentProofStorage.php ===
 // ============================================================================
-// Disimpan di storage/private, TIDAK PERNAH di uploads/ publik: ini dokumen bank yang memperlihatkan
-// nomor rekening dan saldo. Dibaca kembali lewat controller yang memeriksa siapa yang meminta.
+// Disimpan di area PRIVATE (storage/private lokal, bucket R2 privat di produksi), TIDAK PERNAH di area
+// publik: ini dokumen bank yang memperlihatkan nomor rekening dan saldo. Dibaca kembali lewat
+// controller yang memeriksa siapa yang meminta.
 //
 // Berkas SELALU di-decode dan ditulis ulang, tidak pernah disalin. Itu properti KEAMANAN sekaligus
 // ukuran: berkas yang hanya mengaku gambar tidak selamat melewati decoder, dan apa pun di luar piksel
 // (EXIF, payload di ekor berkas) tidak pernah sampai disk.
 
-const PRIVATE_ROOT = () => resolve(process.cwd(), PRIVATE_STORAGE_DIR)
-
-/**
- * Path relatif (dari kolom DB) -> path absolut di dalam storage/private.
- *
- * WAJIB dilewati SETIAP akses berkas privat. Nilai kolom proofPath/identityFilePath berasal dari DB;
- * kalau suatu saat berisi "../../.env" (bug, impor data, atau baris yang disunting tangan), tanpa
- * pagar ini server akan menyajikan berkas apa pun di disk.
- */
-export function resolvePrivate(relativePath: string): string {
-  const root = PRIVATE_ROOT()
-  if (!relativePath || isAbsolute(relativePath)) throw new ResponseError(400, 'Path berkas tidak valid')
-  const full = resolve(root, relativePath)
-  const rel = relative(root, full)
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel) || full !== resolve(root, rel)) {
-    logger.warn(`PATH_TRAVERSAL_DITOLAK: ${relativePath}`)
-    throw new ResponseError(400, 'Path berkas tidak valid')
-  }
-  return full
-}
-
 /** Hapus berkas privat; tidak pernah melempar (berkas yang sudah hilang bukan error). */
 export function deletePrivateFile(relativePath: string): void {
-  try {
-    const full = resolvePrivate(relativePath)
-    if (existsSync(full)) unlinkSync(full)
-  } catch (e) {
-    logger.warn(`Gagal menghapus berkas privat ${relativePath}: ${(e as Error).message}`)
-  }
+  deleteObjects('private', [relativePath])
 }
 
-export function privateFileExists(relativePath: string): boolean {
+/**
+ * Isi berkas privat (path relatif dari kolom DB), atau null bila tidak ada. Nilai kolom
+ * proofPath/identityFilePath berasal dari DB; kalau suatu saat berisi "../../.env", pagar key di
+ * utils/storage.ts menolaknya dan hasilnya null (404), tidak pernah berkas lain.
+ */
+export async function readPrivateFile(relativePath: string): Promise<Buffer | null> {
   try {
-    return existsSync(resolvePrivate(relativePath))
-  } catch {
-    return false
+    return await readObject('private', relativePath)
+  } catch (error) {
+    if (error instanceof ResponseError) return null
+    throw error
   }
 }
 
@@ -121,12 +100,7 @@ export async function storePaymentProof(buffer: Buffer, transactionId: string): 
   }
 
   const relativePath = `${directory}/${stem}.${chosen.ext}`
-  const full = resolvePrivate(relativePath)
-  mkdirSync(dirname(full), { recursive: true })
-  writeFileSync(full, chosen.data)
-  logger.info(`Bukti transfer disimpan: ${relativePath} (${buffer.length} -> ${statSync(full).size} byte)`)
+  await putObject('private', relativePath, chosen.data, proofMimeFor(relativePath))
+  logger.info(`Bukti transfer disimpan: ${relativePath} (${buffer.length} -> ${chosen.data.length} byte)`)
   return relativePath
 }
-
-/** Pemisah path sistem, diekspor untuk test path traversal. */
-export const PATH_SEPARATOR = sep

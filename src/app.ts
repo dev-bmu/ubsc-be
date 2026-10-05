@@ -1,17 +1,15 @@
 // ===== Entry Point API =====
 // Urutan di file ini penting dan mudah dirusak tanpa sadar:
-//   1. dotenv dijalankan sebelum modul apa pun dimuat;
+//   1. berkas env (.env.local di laptop, .env di server — config/load-env.ts) dibaca sebelum modul apa pun dimuat;
 //   2. config/env.ts memvalidasi seluruh environment;
 //   3. baru modul lain di-import.
-// Karena itu SEMUA import selain dotenv di sini bersifat dinamis. Satu import statis ke modul
+// Karena itu SEMUA import selain load-env di sini bersifat dinamis. Satu import statis ke modul
 // yang menyentuh database akan dihoisting ke atas config() dan membuka koneksi dengan
 // DATABASE_URL yang belum divalidasi — persis kegagalan yang env.ts dibuat untuk mencegah.
 
-import { config } from 'dotenv'
+import './config/load-env'
 import type { Server } from 'http'
 import type { Logger } from 'winston'
-
-config({ quiet: true })
 
 /** Diisi setelah bootstrap. Sebelum itu, handler proses jatuh ke console sebagai jaring pengaman. */
 let logger: Logger | undefined

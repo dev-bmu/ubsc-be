@@ -1,17 +1,14 @@
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs'
-import { isAbsolute, relative, resolve } from 'path'
 import { Prisma } from '@prisma/client'
 import sharp from 'sharp'
 import type { AdminMemberPhotoIndexDto, MemberPhotoReviewDto, MemberPhotoStateDto } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
 import { TX_OPTIONS } from '../application/transaction'
-import { UPLOAD_DIR } from '../config'
 import { IMAGE_PIPELINE, UPLOAD_LIMITS } from '../config/upload'
 import { ResponseError } from '../error/response-error'
 import { now } from '../utils/clock'
-import { logger } from '../utils/logger'
 import { customerNumber } from '../utils/money'
+import { deleteObjects, ownedPublicKey, publicUrl, putObject } from '../utils/storage'
 import { MemberPhotoValidation } from '../validation/member-photo-validation'
 import { Validation } from '../validation/Validation'
 import { timeAgoId } from './dashboard-services'
@@ -24,11 +21,8 @@ import { timeAgoId } from './dashboard-services'
 // dilihat staff tidak boleh mewarisi persetujuan foto lama.
 //
 // Pipeline gambarnya sama dengan avatar dan bukti transfer (decode + tulis ULANG oleh sharp, EXIF
-// dibuang); yang berbeda hanya tujuannya: uploads/members, publik tapi bernama acak.
-
-const MEMBER_PHOTO_URL_PREFIX = '/uploads/members/'
-const PUBLIC_ROOT = (): string => resolve(process.cwd(), UPLOAD_DIR)
-const MEMBERS_DIR = (): string => resolve(PUBLIC_ROOT(), 'members')
+// dibuang); yang berbeda hanya tujuannya: area public 'members/', publik tapi bernama acak. Kolom
+// memberPhotoPath menyimpan URL publiknya (publicUrl()).
 
 const ACCEPTED_FORMATS = new Set(['jpeg', 'png', 'webp'])
 const { maxBytes, maxWidth, maxHeight } = UPLOAD_LIMITS.MEMBER_PHOTO
@@ -66,22 +60,12 @@ async function encodeMemberPhoto(buffer: Buffer): Promise<Buffer> {
 }
 
 /**
- * Hapus berkas foto lama — hanya yang benar-benar ditulis modul ini. Nilai kolom berasal dari DB,
- * jadi pagar containment wajib (pola yang sama dengan unlinkOwnedAvatar). Tidak pernah melempar.
+ * Hapus berkas foto lama — hanya yang benar-benar ditulis modul ini (folder 'members/'). Nilai kolom
+ * berasal dari DB; ownedPublicKey() menolak URL asing maupun key berisi '..'. Tidak pernah melempar.
  */
 function unlinkOwnedPhoto(url: string | null): void {
-  if (!url || !url.startsWith(MEMBER_PHOTO_URL_PREFIX)) return
-  const full = resolve(MEMBERS_DIR(), url.slice(MEMBER_PHOTO_URL_PREFIX.length))
-  const within = relative(MEMBERS_DIR(), full)
-  if (within === '' || within.startsWith('..') || isAbsolute(within)) {
-    logger.warn(`Path foto member di luar uploads/members, dilewati: ${url}`)
-    return
-  }
-  try {
-    if (existsSync(full)) unlinkSync(full)
-  } catch (error) {
-    logger.warn(`Gagal menghapus foto member lama ${url}: ${(error as Error).message}`)
-  }
+  const key = ownedPublicKey(url, 'members')
+  if (key) deleteObjects('public', [key])
 }
 
 /** Kunci baris user supaya unggah ulang dan keputusan staff tidak saling menyalip. */
@@ -110,10 +94,9 @@ async function storeMemberPhoto(userId: string, file: UploadedMemberPhoto | unde
   if (!file) throw photoRejection('Pilih foto wajah terlebih dahulu.')
 
   const data = await encodeMemberPhoto(file.buffer)
-  const fileName = `${randomUUID()}.webp`
-  mkdirSync(MEMBERS_DIR(), { recursive: true })
-  writeFileSync(resolve(MEMBERS_DIR(), fileName), data)
-  const url = `${MEMBER_PHOTO_URL_PREFIX}${fileName}`
+  const key = `members/${randomUUID()}.webp`
+  await putObject('public', key, data, 'image/webp')
+  const url = publicUrl(key)
 
   let previous: string | null
   try {

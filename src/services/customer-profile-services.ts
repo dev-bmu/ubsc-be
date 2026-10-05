@@ -1,6 +1,4 @@
 import { randomBytes } from 'crypto'
-import { mkdirSync, statSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
 import { Prisma } from '@prisma/client'
 import sharp from 'sharp'
 import type { CustomerProfileDto } from '../../shared/contracts'
@@ -12,7 +10,8 @@ import { logger } from '../utils/logger'
 import { CustomerProfileValidation } from '../validation/customer-profile-validation'
 import { customerNumber } from '../utils/money'
 import { Validation } from '../validation/Validation'
-import { deletePrivateFile, resolvePrivate } from './payment-proof-services'
+import { putObject } from '../utils/storage'
+import { deletePrivateFile } from './payment-proof-services'
 import { deleteStaffAccount, showStaffProfile, updateStaffPassword, updateStaffProfile } from './staff-profile-services'
 import type { UploadedAvatar } from './staff-profile-services'
 
@@ -174,17 +173,16 @@ export async function updateCustomerPassword(userId: string, request: unknown): 
 // ============================================================================
 // === Dokumen identitas: PRIVAT, tidak pernah di uploads/ ===
 // ============================================================================
-// KTM / kartu pegawai / surat keterangan adalah dokumen ber-PII. Ia disimpan di storage/private dan
+// KTM / kartu pegawai / surat keterangan adalah dokumen ber-PII. Ia disimpan di area PRIVATE
+// (storage/private lokal, bucket R2 privat di produksi — utils/storage.ts) dan
 // dibaca kembali HANYA lewat GET /api/admin/identity/:userId/document (Fase 8E), yang digerbangi
 // permission IDENTITY_VERIFY dan disajikan dengan `private, no-store`.
 //
 // BENTUK NILAI KOLOM — inilah kontrak antara fase ini dan 8E:
-//   identityFilePath = 'identity/<userId>/<stem>.<ext>', RELATIF terhadap PRIVATE_STORAGE_DIR.
-// identityDocumentFile() (identity-admin-services.ts) memanggil privateFileExists(path) lalu
-// resolvePrivate(path), keduanya me-resolve relatif terhadap PRIVATE_STORAGE_DIR yang sama. Nilai
-// absolut atau yang memuat '..' ditolak resolvePrivate() — karena itu penulisan di sini pun
-// MELEWATI resolvePrivate(), bukan resolve() polos: satu-satunya jalan ke storage/private, baik untuk
-// menulis maupun membaca.
+//   identityFilePath = 'identity/<userId>/<stem>.<ext>', key RELATIF di area private.
+// identityDocumentFile() (identity-admin-services.ts) membacanya lewat readPrivateFile(); menulis di
+// sini lewat putObject('private', ...). Keduanya melewati pagar key utils/storage.ts — nilai absolut
+// atau yang memuat '..' ditolak, baik untuk menulis maupun membaca.
 //
 // Tata letaknya sengaja sama dengan Laravel (`->store('identity/'.$user->id, 'identity-documents')`,
 // disk root storage/app/identity-documents). Yang berpindah hanya akar disknya; segmen relatifnya
@@ -283,11 +281,10 @@ async function storeIdentityDocument(userId: string, buffer: Buffer): Promise<st
   // Nama berkas asli milik klien TIDAK ikut sama sekali — tidak ada yang perlu di-slugify dan tidak
   // ada nama tebakan yang bisa bertabrakan. Sama dengan storePaymentProof().
   const relativePath = `identity/${userId}/${randomBytes(18).toString('base64url')}.${chosen.ext}`
-  const full = resolvePrivate(relativePath)
-  mkdirSync(dirname(full), { recursive: true })
-  writeFileSync(full, chosen.data)
+  const mimeType = chosen.ext === 'pdf' ? 'application/pdf' : chosen.ext === 'png' ? 'image/png' : 'image/webp'
+  await putObject('private', relativePath, chosen.data, mimeType)
 
-  logger.info(`Dokumen identitas disimpan: ${relativePath} (${buffer.length} -> ${statSync(full).size} byte)`)
+  logger.info(`Dokumen identitas disimpan: ${relativePath} (${buffer.length} -> ${chosen.data.length} byte)`)
   return relativePath
 }
 
@@ -354,8 +351,8 @@ export async function submitCustomerIdentity(
   })
 
   // Sama seperti Laravel: berkas lama dibuang HANYA setelah baris menunjuk ke yang baru, dan hanya
-  // bila memang berbeda. deletePrivateFile() tidak pernah melempar dan melewati resolvePrivate() di
-  // dalamnya, jadi nilai kolom yang aneh berhenti di situ, bukan menghapus berkas lain di disk.
+  // bila memang berbeda. deletePrivateFile() tidak pernah melempar dan melewati pagar key
+  // utils/storage.ts, jadi nilai kolom yang aneh berhenti di situ, bukan menghapus berkas lain.
   if (previous && previous !== path) deletePrivateFile(previous)
 
   logger.info(`Pengajuan identitas diterima: user=${userId} status=pending`)

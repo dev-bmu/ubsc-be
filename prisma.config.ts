@@ -1,4 +1,6 @@
-import 'dotenv/config'
+// .env.local (laptop) atau .env (server) — pilihan yang sama dengan API (src/config/load-env.ts).
+// Penting: migrate di laptop tidak boleh membaca DATABASE_URL produksi dari .env.
+import './src/config/load-env'
 import { defineConfig, env } from 'prisma/config'
 
 export default defineConfig({

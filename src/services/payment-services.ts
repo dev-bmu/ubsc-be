@@ -6,7 +6,7 @@ import { ResponseError } from '../error/response-error'
 import { dateOnlyToString, formatInstant, now, translatedDate } from '../utils/clock'
 import { transferTotal } from '../utils/money'
 import { attachProof, bankAccount, qrisSetting } from './manual-payment-services'
-import { deletePrivateFile, privateFileExists, proofMimeFor, resolvePrivate, storePaymentProof } from './payment-proof-services'
+import { deletePrivateFile, proofMimeFor, readPrivateFile, storePaymentProof } from './payment-proof-services'
 
 // ============================================================================
 // === Pembayaran sisi pelanggan — port dari Public\PaymentController ===
@@ -172,7 +172,7 @@ export async function uploadPaymentProof(userId: string, bookingId: string, file
 // ===== Berkas bukti =====
 
 export interface ProofFile {
-  absolutePath: string
+  data: Buffer
   mime: string
   fileName: string
 }
@@ -184,11 +184,12 @@ async function proofFileFor(transactionId: string, ownerId: string | null): Prom
   })
   // ownerId null = staff yang sudah lolos requireAnyPermission di route.
   if (!transaction || (ownerId !== null && transaction.userId !== ownerId)) throw new ResponseError(404, 'Bukti transfer tidak ditemukan')
-  if (!transaction.proofPath || !privateFileExists(transaction.proofPath)) throw new ResponseError(404, 'Bukti transfer tidak ditemukan')
+  const data = transaction.proofPath ? await readPrivateFile(transaction.proofPath) : null
+  if (!transaction.proofPath || !data) throw new ResponseError(404, 'Bukti transfer tidak ditemukan')
 
   const extension = transaction.proofPath.endsWith('.png') ? 'png' : 'webp'
   return {
-    absolutePath: resolvePrivate(transaction.proofPath),
+    data,
     mime: proofMimeFor(transaction.proofPath),
     fileName: `bukti-${transaction.invoiceNumber}.${extension}`
   }

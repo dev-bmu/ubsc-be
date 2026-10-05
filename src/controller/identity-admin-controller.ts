@@ -60,7 +60,7 @@ export const verify: RequestHandler = async (req, res, next) => {
  */
 export const documentFile: RequestHandler = async (req, res, next) => {
   try {
-    sendProofFile(res, next, await identityDocumentFile(String(req.params.userId)))
+    sendProofFile(res, await identityDocumentFile(String(req.params.userId)))
   } catch (error) {
     next(error)
   }

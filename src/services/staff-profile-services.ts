@@ -1,15 +1,13 @@
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'fs'
-import { dirname, isAbsolute, relative, resolve } from 'path'
 import bcrypt from 'bcryptjs'
 import { Prisma } from '@prisma/client'
 import sharp from 'sharp'
 import type { StaffProfileDto } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
-import { UPLOAD_DIR } from '../config'
 import { IMAGE_PIPELINE, UPLOAD_LIMITS } from '../config/upload'
 import { ResponseError } from '../error/response-error'
 import { logger } from '../utils/logger'
+import { deleteObjects, ownedPublicKey, publicUrl, putObject } from '../utils/storage'
 import { StaffProfileValidation } from '../validation/staff-profile-validation'
 import { Validation } from '../validation/Validation'
 import { forceLogoutAll } from './auth-services'
@@ -40,17 +38,8 @@ const PROFILE_SELECT = {
 
 type ProfileRow = Prisma.UserGetPayload<{ select: typeof PROFILE_SELECT }>
 
-/**
- * Prefiks URL avatar milik API ini. Dua bagian yang keduanya dikunci di tempat lain:
- *   - '/uploads' -> mount express.static di application/web.ts:57 (lewat rewrite next.config).
- *     Literal, BUKAN UPLOAD_DIR: UPLOAD_DIR adalah folder di disk, bukan path URL-nya — alasan yang
- *     sama dengan PUBLIC_URL_PREFIX di media-services.ts.
- *   - 'avatars/' -> subfolder yang ditulis storeAvatarImage() di bawah, dan SATU-SATUNYA tempat yang
- *     boleh disentuh unlinkOwnedAvatar().
- */
-const AVATAR_URL_PREFIX = '/uploads/avatars/'
-
-const PUBLIC_ROOT = (): string => resolve(process.cwd(), UPLOAD_DIR)
+/** Folder avatar di area public (utils/storage.ts) — SATU-SATUNYA tempat yang boleh disentuh unlinkOwnedAvatar(). */
+const AVATAR_FOLDER = 'avatars'
 
 /**
  * Accessor `getAvatarUrlAttribute()` model User Laravel, tiga cabangnya persis:
@@ -60,7 +49,8 @@ const PUBLIC_ROOT = (): string => resolve(process.cwd(), UPLOAD_DIR)
  *
  * Cabang 2 itulah yang membuat avatar Google (URL absolut googleusercontent, ditulis
  * google-services.ts) tidak pernah dirusak, dan yang membuat avatar yang diunggah lewat endpoint ini
- * — nilainya sudah '/uploads/avatars/...' — lewat tanpa diubah apa pun.
+ * — nilainya sudah URL publik ('/uploads/avatars/...' lokal, 'https://cdn.../uploads/avatars/...' di
+ * R2) — lewat tanpa diubah apa pun.
  *
  * Cabang 3 memakai path RELATIF, bukan asset() yang absolut: alasannya sama dengan urlFor() di
  * media-services.ts (landing dan API beda origin saat dev, '/uploads' diproxy same-origin). Ia hanya
@@ -117,8 +107,8 @@ export async function showStaffProfile(userId: string): Promise<StaffProfileDto>
 //
 // Tata letaknya 'avatars/<uuid>.<ext>' (bukan '<uuid>/<nama-kebab>.<ext>' ala media): nama berkas
 // asli milik klien tidak ikut sama sekali, jadi tidak ada yang perlu di-slugify dan tidak ada nama
-// tebakan yang bisa bertabrakan. Nilai yang disimpan di kolom users.avatar adalah URL BER-ROOT
-// ('/uploads/avatars/<uuid>.webp') supaya cabang pass-through accessor di atas berlaku apa adanya.
+// tebakan yang bisa bertabrakan. Nilai yang disimpan di kolom users.avatar adalah URL publiknya
+// (publicUrl()) supaya cabang pass-through accessor di atas berlaku apa adanya.
 
 /** Bentuk minimum berkas multer memoryStorage yang dipakai di sini — sama dengan UploadedImage CMS. */
 export interface UploadedAvatar {
@@ -191,13 +181,11 @@ async function storeAvatarImage(file: UploadedAvatar): Promise<string> {
     if (png.length < webp.length) chosen = { data: png, ext: 'png' }
   }
 
-  const fileName = `${randomUUID()}.${chosen.ext}`
-  const destination = resolve(PUBLIC_ROOT(), 'avatars', fileName)
-  mkdirSync(dirname(destination), { recursive: true })
-  writeFileSync(destination, chosen.data)
+  const key = `${AVATAR_FOLDER}/${randomUUID()}.${chosen.ext}`
+  await putObject('public', key, chosen.data, chosen.ext === 'png' ? 'image/png' : 'image/webp')
 
-  logger.info(`Avatar diunggah: ${fileName} (${statSync(destination).size} byte)`)
-  return `${AVATAR_URL_PREFIX}${fileName}`
+  logger.info(`Avatar diunggah: ${key} (${chosen.data.length} byte)`)
+  return publicUrl(key)
 }
 
 /**
@@ -215,28 +203,15 @@ async function storeAvatarImage(file: UploadedAvatar): Promise<string> {
  *     bernama sama.
  *
  * Yang dipertahankan adalah MAKSUDNYA: hapus hanya berkas yang benar-benar kita tulis sendiri, dan
- * jangan pernah menyentuh URL eksternal. Karena itu syaratnya menjadi "berawalan '/uploads/avatars/'",
- * ditambah pagar containment seperti unlinkMediaFiles(): nilai kolom berasal dari database, dan tanpa
- * pagar itu sebuah nilai berisi '../../' menjadikan fungsi ini penghapus berkas apa pun di disk.
+ * jangan pernah menyentuh URL eksternal. Karena itu syaratnya menjadi "URL publik kita di folder
+ * avatars/" (ownedPublicKey), yang juga menolak key berisi '../../': nilai kolom berasal dari database,
+ * dan tanpa pagar itu fungsi ini menjadi penghapus berkas apa pun.
  *
  * Tidak pernah melempar — kegagalan bersih-bersih bukan error milik user.
  */
 function unlinkOwnedAvatar(avatar: string | null): void {
-  if (!avatar || !avatar.startsWith(AVATAR_URL_PREFIX)) return
-
-  const root = PUBLIC_ROOT()
-  const full = resolve(root, 'avatars', avatar.slice(AVATAR_URL_PREFIX.length))
-  const within = relative(resolve(root, 'avatars'), full)
-  if (within === '' || within.startsWith('..') || isAbsolute(within)) {
-    logger.warn(`Path avatar di luar uploads/avatars, dilewati: ${avatar}`)
-    return
-  }
-
-  try {
-    if (existsSync(full)) unlinkSync(full)
-  } catch (error) {
-    logger.warn(`Gagal menghapus avatar lama ${avatar}: ${(error as Error).message}`)
-  }
+  const key = ownedPublicKey(avatar, AVATAR_FOLDER)
+  if (key) deleteObjects('public', [key])
 }
 
 // ===== 2. Update — PATCH /api/admin/profile =====

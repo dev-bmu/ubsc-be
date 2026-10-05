@@ -11,12 +11,12 @@ Accurate) dibahas di bagian tersendiri karena masih berupa pertanyaan, bukan spe
 
 ## 0. Ringkasan eksekutif
 
-| # | Fitur | Inti perubahan | Skema? | Perkiraan |
-|---|-------|----------------|--------|-----------|
-| 1 | Biaya admin + kode unik | Rp500 biaya admin di setiap transfer; kode unik dipersempit ke 1–500 | 1 kolom | Kecil (1–2 hari) |
-| 2 | E-Card + check-in gym | Nomor member, kartu ber-barcode, meja scan FO, batas 1×/hari, analitik jam ramai | 2 tabel + 2 kolom | Besar (5–7 hari) |
-| 3 | Daftar membership via web | Checkout membership online + foto wajib; jalur FO dipertahankan | 3 kolom + 1 enum | Sedang (3–4 hari) |
-| 4 | Export Excel → Accurate | Belum bisa di-scope; butuh template Accurate dari finance | — | Butuh keputusan dulu |
+| #   | Fitur                     | Inti perubahan                                                                   | Skema?            | Perkiraan            |
+| --- | ------------------------- | -------------------------------------------------------------------------------- | ----------------- | -------------------- |
+| 1   | Biaya admin + kode unik   | Rp500 biaya admin di setiap transfer; kode unik dipersempit ke 1–500             | 1 kolom           | Kecil (1–2 hari)     |
+| 2   | E-Card + check-in gym     | Nomor member, kartu ber-barcode, meja scan FO, batas 1×/hari, analitik jam ramai | 2 tabel + 2 kolom | Besar (5–7 hari)     |
+| 3   | Daftar membership via web | Checkout membership online + foto wajib; jalur FO dipertahankan                  | 3 kolom + 1 enum  | Sedang (3–4 hari)    |
+| 4   | Export Excel → Accurate   | Belum bisa di-scope; butuh template Accurate dari finance                        | —                 | Butuh keputusan dulu |
 
 Fitur 2 dan 3 **saling mengunci**: E-Card tidak ada isinya tanpa membership, dan
 pendaftaran membership tidak ada gunanya tanpa kartu. Keduanya sebaiknya dikerjakan
@@ -31,7 +31,7 @@ Ini didahulukan karena tujuh hal di bawah mengubah bentuk pekerjaan, bukan sekad
 **Fitur 1 — biaya admin (UPDATED)**
 
 1. Biaya admin Rp500 dikenakan ke **apa saja**? Hanya booking lewat website, atau juga
-   booking yang dibuatkan FO, dan juga pembelian membership? Semua kena biaya admin 500 plus kode unik itu. 
+   booking yang dibuatkan FO, dan juga pembelian membership? Semua kena biaya admin 500 plus kode unik itu.
 2. Biaya admin ini **pendapatan** atau **pengganti biaya**? Pendapatan. intinya nanti yang total itu yang di export ke Accurate.
 
    Keputusan lanjutan (2026-09-25, saat implementasi):
@@ -118,10 +118,10 @@ Kode tetap dimulai dari **1**, bukan 0 — kode 0 tidak bisa dibedakan dari "tid
 Rp500 dan batas 500 masuk `system_settings`, mengikuti pola `payment_bank_name` /
 `payment_hold_minutes` yang sudah ada:
 
-| Key | Default | Arti |
-|-----|---------|------|
-| `payment_admin_fee` | `500` | Rupiah, 0 = matikan biaya admin |
-| `payment_unique_code_max` | `500` | Batas atas kode unik |
+| Key                       | Default | Arti                            |
+| ------------------------- | ------- | ------------------------------- |
+| `payment_admin_fee`       | `500`   | Rupiah, 0 = matikan biaya admin |
+| `payment_unique_code_max` | `500`   | Batas atas kode unik            |
 
 Keduanya ditambahkan ke form **Pengaturan Pembayaran** yang sudah ada di panel admin
 (halaman Payments), lewat `updatePaymentSettings()`. Client hampir pasti akan mengubah
@@ -252,7 +252,7 @@ Konsekuensi yang harus diterima: **membership walk-in yang sekarang boleh tanpa 
 client ingin walk-in juga berkartu, FO harus membuatkan akun minimal (nama + nomor HP, tanpa
 password). Ini justru sehat — tanpa akun, tidak ada tempat menyimpan foto validasi gerbang.
 
-*Alternatif yang lebih murah:* taruh nomor di `Membership` dan **salin turun** saat
+_Alternatif yang lebih murah:_ taruh nomor di `Membership` dan **salin turun** saat
 perpanjangan. Lebih sedikit perubahan, tapi tidak menyelesaikan deduplikasi dan tidak bisa
 dipakai untuk Accurate. Tidak disarankan.
 
@@ -277,7 +277,7 @@ kerahasiaan nomornya. Ini disengaja: kartu yang bocor nomornya tetap tidak bisa 
 lain, karena wajahnya tidak cocok.
 
 Tambahan: tombol unduh kartu sebagai PNG, dan kartu dikirim lewat email saat membership
-aktif. *(Apple/Google Wallet pass: di luar lingkup, catat sebagai permintaan lanjutan.)*
+aktif. _(Apple/Google Wallet pass: di luar lingkup, catat sebagai permintaan lanjutan.)_
 
 ### 3.4 Meja check-in gym (FO)
 
@@ -298,13 +298,13 @@ Alur:
 
 Vonis yang mungkin:
 
-| Keadaan | Warna | Bisa dilanjut? |
-|---------|-------|----------------|
-| Membership aktif, belum masuk hari ini | Hijau | Ya |
-| Sudah check-in hari ini (jam sekian) | Kuning | Hanya dengan override |
-| Membership kedaluwarsa / dibatalkan | Merah | Tidak — tawarkan perpanjangan |
-| Nomor tidak ditemukan | Merah | Tidak |
-| Foto belum disetujui | Kuning | Keputusan client (usulan: boleh, tapi ditandai) |
+| Keadaan                                | Warna  | Bisa dilanjut?                                  |
+| -------------------------------------- | ------ | ----------------------------------------------- |
+| Membership aktif, belum masuk hari ini | Hijau  | Ya                                              |
+| Sudah check-in hari ini (jam sekian)   | Kuning | Hanya dengan override                           |
+| Membership kedaluwarsa / dibatalkan    | Merah  | Tidak — tawarkan perpanjangan                   |
+| Nomor tidak ditemukan                  | Merah  | Tidak                                           |
+| Foto belum disetujui                   | Kuning | Keputusan client (usulan: boleh, tapi ditandai) |
 
 Pencatatannya **dua langkah** (tampilkan dulu, baru konfirmasi), bukan sekali scan langsung
 tercatat. Alasannya: seluruh gunanya foto adalah agar manusia membandingkannya. Scan yang
@@ -456,12 +456,12 @@ layar FO — tapi nama berkasnya acak sehingga tidak bisa ditebak.
 **Ini berbeda dari verifikasi identitas yang sudah ada,** dan perbedaannya perlu dijaga agar
 tidak tercampur:
 
-| | Dokumen identitas (sudah ada) | Foto member (baru) |
-|---|---|---|
-| Isi | KTP / KTM | Foto wajah |
-| Guna | Menentukan kategori harga (warga UB / umum) | Validasi wajah di gerbang gym |
-| Simpan | Privat, tidak pernah publik | Mount unggahan, nama acak |
-| Peninjau | Antrean Verifikasi Identitas | Antrean yang sama, tab baru |
+|          | Dokumen identitas (sudah ada)               | Foto member (baru)            |
+| -------- | ------------------------------------------- | ----------------------------- |
+| Isi      | KTP / KTM                                   | Foto wajah                    |
+| Guna     | Menentukan kategori harga (warga UB / umum) | Validasi wajah di gerbang gym |
+| Simpan   | Privat, tidak pernah publik                 | Mount unggahan, nama acak     |
+| Peninjau | Antrean Verifikasi Identitas                | Antrean yang sama, tab baru   |
 
 Keduanya memakai antrean verifikasi yang sudah ada supaya FO tidak perlu belajar layar baru.
 
@@ -537,8 +537,8 @@ melainkan keputusan di 6.3.
 
 Tiga model. Perlu dipilih satu bersama finance.
 
-**Model 1 — Accurate tidak menerima master pelanggan sama sekali.** *(rekomendasi untuk
-sekarang)*
+**Model 1 — Accurate tidak menerima master pelanggan sama sekali.** _(rekomendasi untuk
+sekarang)_
 
 Semua pendapatan web diposting ke 2–3 pelanggan generik: "Pelanggan Website", "Pelanggan
 Walk-in", "Member Gym". Setiap baris export membawa nomor member dan nomor kuitansi UBSC di
@@ -648,13 +648,13 @@ Selagi mesin export dibangun, beberapa yang murah dan langsung berguna:
 
 ## 7. Urutan pengerjaan yang disarankan
 
-| Tahap | Isi | Alasan urutan |
-|-------|-----|---------------|
-| A | Fitur 1 (biaya admin + kode unik) — **kode selesai 2026-09-25, lihat 2.7** | Berdiri sendiri, kecil, bisa rilis cepat |
-| B | `customerNumber` + foto member + `pending_payment` — **kode selesai 2026-09-25, lihat 7.1** | Fondasi bersama fitur 2 & 3 |
-| C | Fitur 3 (checkout membership web + FO) — **kode selesai 2026-09-25, lihat 7.2** | Mengisi data yang dibutuhkan E-Card |
-| D | Fitur 2 (E-Card + meja scan + analitik) — **kode selesai 2026-09-26, lihat 7.3** | Butuh member yang sudah berkartu |
-| E | Export Accurate — **pelanggan + faktur selesai 2026-09-28, lihat 7.4**; penerimaan penjualan menyusul | Butuh jawaban dari finance |
+| Tahap | Isi                                                                                                   | Alasan urutan                            |
+| ----- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| A     | Fitur 1 (biaya admin + kode unik) — **kode selesai 2026-09-25, lihat 2.7**                            | Berdiri sendiri, kecil, bisa rilis cepat |
+| B     | `customerNumber` + foto member + `pending_payment` — **kode selesai 2026-09-25, lihat 7.1**           | Fondasi bersama fitur 2 & 3              |
+| C     | Fitur 3 (checkout membership web + FO) — **kode selesai 2026-09-25, lihat 7.2**                       | Mengisi data yang dibutuhkan E-Card      |
+| D     | Fitur 2 (E-Card + meja scan + analitik) — **kode selesai 2026-09-26, lihat 7.3**                      | Butuh member yang sudah berkartu         |
+| E     | Export Accurate — **pelanggan + faktur selesai 2026-09-28, lihat 7.4**; penerimaan penjualan menyusul | Butuh jawaban dari finance               |
 
 Tahap A bisa berjalan paralel dengan B. Tahap D tidak bisa didemokan sebelum C jalan — tidak
 ada member yang punya kartu.
@@ -780,6 +780,7 @@ nama, nomor member, paket, masa berlaku, dan QR. Tombol "Unduh Kartu (PNG)" meny
 sama persis dengan yang tampil.
 
 **Email verifikasi.**
+
 - Email pendaftaran tidak sampai karena `.env` dev berisi `MAIL_TRANSPORT=log`. Email ditulis ke
   `storage/mail-preview/*.eml`, tidak dikirim. Kirim sungguhan: `MAIL_TRANSPORT=smtp`. Pengirim otomatis
   memakai `MAIL_USER` bila `MAIL_FROM_ADDRESS` kosong.
@@ -799,6 +800,7 @@ sama persis dengan yang tampil.
 - SMTP dev memakai port 587 + STARTTLS wajib, karena jaringan dev memblokir 465 lewat IPv4.
 
 **Membership lewat FO = tagihan + Tandai Lunas** (mengganti keputusan tahap A "langsung PAID").
+
 - Membership yang dibuat atau diperpanjang di meja depan berstatus menunggu pembayaran, dengan transfer
   terbuka tanpa batas waktu sebesar harga + biaya admin + kode unik. Nominal 0 tetap langsung aktif.
 - Invoice yang sama tampil di tiga tempat:
@@ -822,12 +824,13 @@ semua kartu.
 
 **Export Accurate (Finance → Export Accurate, izin `reports.read`).** Dua berkas .xlsx per rentang tanggal
 (maks 31 hari). Kolom keduanya identik dengan template dari finance.
-1. *Pelanggan*: pelanggan yang muncul di faktur rentang itu (keputusan client). `ID Pelanggan` =
+
+1. _Pelanggan_: pelanggan yang muncul di faktur rentang itu (keputusan client). `ID Pelanggan` =
    `WEB.0001` dst. (`User.accurateSequence`), ID terpisah dari nomor member.
    - Nomor terbit saat pelanggan pertama kali masuk export, urut tanggal daftar, jadi counternya hanya
      berisi pelanggan yang punya penjualan.
    - Transaksi tanpa akun (walk-in) memakai pelanggan umum `WEB.0000`.
-2. *Faktur penjualan*: semua transaksi yang dibuat pada rentang itu, lunas maupun belum. Yang batal,
+2. _Faktur penjualan_: semua transaksi yang dibuat pada rentang itu, lunas maupun belum. Yang batal,
    kedaluwarsa, dan bernominal 0 tidak ikut.
    - Satu transaksi = satu faktur. NUMBER = nomor kuitansi UBSC, sehingga impor ulang ditolak Accurate
      dan export penerimaan kelak bisa merujuknya.
@@ -838,6 +841,7 @@ semua kartu.
    - Nomor item yang belum diisi menghentikan export (422) dengan daftar yang harus dilengkapi.
 
 **Yang perlu disiapkan finance di Accurate.**
+
 - Item jasa dengan nomor persis `UBSC-ADMIN`, `UBSC-KODEUNIK`, `UBSC-MEMBERSHIP`, dan satu per
   fasilitas/paket.
 - Pelanggan `WEB.0000`. Pelanggan ini ikut terbawa di export pelanggan bila ada transaksi walk-in.
@@ -847,6 +851,7 @@ semua kartu.
 - Export penerimaan penjualan (yang lunas di hari itu) menyusul sesuai permintaan client.
 
 **Susulan 2026-09-28 (sore).**
+
 - **Nomor item Accurate per tarif.** Fasilitas dan paket punya dua nomor: Umum (`accurateItemNo`) dan
   Warga UB (`accurateItemNoWarga`), mis. membership reguler `1002` dan Warga UB `1006`.
   - Transaksi mencatat tarif yang benar-benar dipakai (`Transaction.priceCategory`):
@@ -890,3 +895,24 @@ semua kartu.
   - Migrasi `20261001090000` mengisi nomor baris lama.
   - Data pembayaran dev (transaksi, booking, bukti) dihapus atas permintaan client, sehingga nomor
     mulai dari 0001.
+
+### 7.6 Catatan client 2026-10-05 — semua berkas ke Cloudflare R2
+
+- Tujuan client: semua berkas di satu tempat. Unggahan API tidak lagi disimpan di disk VPS di produksi.
+- `src/utils/storage.ts` menjadi satu-satunya jalan menulis, membaca, dan menghapus berkas. Ada dua mode:
+  - `STORAGE_DRIVER=local` untuk dev dan test, perilakunya sama seperti sebelumnya;
+  - `STORAGE_DRIVER=r2` untuk produksi.
+- Bucket publik (`R2_PUBLIC_BUCKET`, custom domain `cdn.ubsportcenter.co.id`):
+  - video `ubsc-media` di `reels/`;
+  - CMS, foto member, avatar, dan QRIS di `uploads/`.
+  - URL tersimpan di DB sebagai URL publik penuh (avatar, foto member, QRIS). Media CMS disusun dari
+    uuid + nama berkas.
+- Bucket privat (`R2_PRIVATE_BUCKET`, tanpa domain): bukti bayar dan dokumen identitas. Hanya dibaca API
+  lewat endpoint yang memeriksa hak akses.
+- Migrasi berkas lama memakai `npm run storage:migrate-r2`: unggah dengan key yang sama, lalu tulis ulang
+  URL `/uploads/...` lama di DB.
+- Konsekuensi di landing:
+  - `next/image` mengizinkan host CDN;
+  - foto E-card dimuat dengan mode CORS;
+  - tombol "Unduh QRIS" mengambil gambar sebagai blob.
+  - Ketiganya butuh header `Access-Control-Allow-Origin` di CDN (Transform Rule Cloudflare).

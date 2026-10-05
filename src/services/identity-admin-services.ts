@@ -7,7 +7,7 @@ import { now } from '../utils/clock'
 import { IdentityAdminValidation } from '../validation/identity-admin-validation'
 import { Validation } from '../validation/Validation'
 import { timeAgoId } from './dashboard-services'
-import { privateFileExists, resolvePrivate } from './payment-proof-services'
+import { readPrivateFile } from './payment-proof-services'
 import type { ProofFile } from './payment-services'
 
 // ============================================================================
@@ -16,9 +16,9 @@ import type { ProofFile } from './payment-services'
 // Ketiga aksi Laravel (index / verify / document) dipetakan satu-satu. Semuanya digerbangi
 // `authorize('verify-identity')` = PERMISSIONS.IDENTITY_VERIFY, dicek di baris route.
 //
-// Dokumen identitas adalah berkas PRIVAT (KTP/KTM) — tidak pernah di-mount publik. Setiap pembacaan
-// wajib lewat resolvePrivate(): nilai identityFilePath berasal dari DB dan tanpa pagar itu kolom yang
-// berisi "../../.env" akan membuat server menyajikan berkas apa pun di disk.
+// Dokumen identitas adalah berkas PRIVAT (KTP/KTM) — tidak pernah publik. Setiap pembacaan wajib
+// lewat readPrivateFile(): nilai identityFilePath berasal dari DB dan tanpa pagar key itu kolom yang
+// berisi "../../.env" akan membuat server menyajikan berkas apa pun.
 
 // ===== Pemuat + present() =====
 
@@ -153,8 +153,8 @@ function documentFileName(path: string): string {
  *   2. berkasnya tidak ada di disk    -> 404 'Document not found on disk.'
  * Pesannya diterjemahkan ke bahasa Indonesia mengikuti konvensi repo ini.
  *
- * privateFileExists() memanggil resolvePrivate() di dalamnya dan mengembalikan false bila pagar path
- * traversal menolak — path yang mencurigakan berhenti di cabang 404 dan tidak pernah sampai disajikan.
+ * readPrivateFile() mengembalikan null bila pagar path traversal menolak — path yang mencurigakan
+ * berhenti di cabang 404 dan tidak pernah sampai disajikan.
  */
 export async function identityDocumentFile(userId: string): Promise<ProofFile> {
   const user = await prismaClient.user.findUnique({ where: { id: userId }, select: { identityFilePath: true } })
@@ -162,10 +162,11 @@ export async function identityDocumentFile(userId: string): Promise<ProofFile> {
 
   const path = (user.identityFilePath ?? '').trim()
   if (path === '') throw new ResponseError(404, 'Dokumen identitas belum diunggah')
-  if (!privateFileExists(path)) throw new ResponseError(404, 'Dokumen identitas tidak ditemukan di penyimpanan')
+  const data = await readPrivateFile(path)
+  if (!data) throw new ResponseError(404, 'Dokumen identitas tidak ditemukan di penyimpanan')
 
   return {
-    absolutePath: resolvePrivate(path),
+    data,
     mime: identityMimeFor(path),
     fileName: documentFileName(path)
   }

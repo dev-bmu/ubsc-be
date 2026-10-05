@@ -1,27 +1,13 @@
 import { randomUUID } from 'crypto'
-import {
-  closeSync,
-  createReadStream,
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readSync,
-  renameSync,
-  rmdirSync,
-  statSync,
-  unlinkSync,
-  writeFileSync
-} from 'fs'
-import { dirname, extname, isAbsolute, relative, resolve } from 'path'
-import { pipeline } from 'stream/promises'
+import { closeSync, existsSync, openSync, readSync, statSync, unlinkSync } from 'fs'
+import { extname } from 'path'
 import sharp from 'sharp'
 import { Prisma } from '@prisma/client'
 import { prismaClient } from '../application/database'
-import { UPLOAD_DIR } from '../config'
 import { IMAGE_PIPELINE, UPLOAD_LIMITS } from '../config/upload'
 import { ResponseError } from '../error/response-error'
 import { logger } from '../utils/logger'
+import { deleteObjects, putFile, putObject } from '../utils/storage'
 import { MEDIA_SELECT, MediaCollection, MediaModelType, MediaRow, storagePathFor } from './media-services'
 
 // ============================================================================
@@ -30,7 +16,7 @@ import { MEDIA_SELECT, MediaCollection, MediaModelType, MediaRow, storagePathFor
 // media-services.ts hanya BACA + deleteForModel (hapus semua media satu owner). File ini menambah
 // jalur tulis yang dulu hanya ada di seeder (attachMedia): unggah gambar admin, encode ulang lewat
 // sharp (properti keamanan — berkas yang cuma mengaku gambar tidak selamat melewati decoder), lalu
-// tulis ke uploads/media/<uuid>/<nama-kebab>.<ext> + buat baris Media disk:'public'. Tata letaknya
+// tulis ke area public 'media/<uuid>/<nama-kebab>.<ext>' (utils/storage.ts) + buat baris Media disk:'public'. Tata letaknya
 // WAJIB sama dengan attachMedia (prisma/seeders/shared.ts) dan dengan storagePathFor/urlFor.
 //
 // Sejak Fase 8F file ini juga memegang jalur VIDEO (storePublicVideo, koleksi 'video' milik Reel).
@@ -42,8 +28,6 @@ import { MEDIA_SELECT, MediaCollection, MediaModelType, MediaRow, storagePathFor
 // tinggal unggah ulang, tidak ada baris DB yatim.
 
 type Db = Prisma.TransactionClient | typeof prismaClient
-
-const PUBLIC_ROOT = (): string => resolve(process.cwd(), UPLOAD_DIR)
 
 // Str::slug() untuk nama berkas web-safe (R9): "Foto Lapangan.JPG" -> "foto-lapangan".
 const slugify = (value: string): string =>
@@ -118,10 +102,9 @@ export async function storePublicMedia(input: StoreMediaInput): Promise<MediaRow
   const fileName = `${stem}.${chosen.ext}`
   const uuid = randomUUID()
 
-  const destination = resolve(PUBLIC_ROOT(), 'media', uuid, fileName)
-  mkdirSync(dirname(destination), { recursive: true })
-  writeFileSync(destination, chosen.data)
-  const size = statSync(destination).size
+  const mimeType = chosen.ext === 'png' ? 'image/png' : 'image/webp'
+  await putObject('public', `media/${uuid}/${fileName}`, chosen.data, mimeType)
+  const size = chosen.data.length
 
   const row = await prismaClient.media.create({
     data: {
@@ -131,7 +114,7 @@ export async function storePublicMedia(input: StoreMediaInput): Promise<MediaRow
       collectionName: input.collectionName,
       name: input.displayName ?? baseName.replace(/\.[^.]+$/, ''),
       fileName,
-      mimeType: chosen.ext === 'png' ? 'image/png' : 'image/webp',
+      mimeType,
       disk: 'public',
       size,
       orderColumn: input.orderColumn ?? null
@@ -151,8 +134,8 @@ export async function storePublicMedia(input: StoreMediaInput): Promise<MediaRow
 // tiga titik, dan hanya di tiga titik:
 //
 //   1. Berkasnya tiba sebagai PATH SEMENTARA dari multer diskStorage, bukan Buffer. Berkas itu
-//      DIPINDAHKAN (renameSync; fallback stream copy lintas volume), tidak pernah dibaca utuh ke
-//      memori — dan dihapus pada JALUR SUKSES MAUPUN GAGAL (blok finally di bawah).
+//      DISALIN ke penyimpanan (putFile: salin berkas lokal / Blob berbasis berkas ke R2), tidak pernah
+//      dibaca utuh ke memori — dan dihapus pada JALUR SUKSES MAUPUN GAGAL (blok finally di bawah).
 //   2. Tanpa re-encode, "file yang cuma mengaku video" tidak dijinakkan decoder mana pun, jadi ISI
 //      berkas disniff sendiri (magic bytes) dan apa pun di luar mp4/webm ditolak 422. Content-Type
 //      multipart dan nama berkas dari klien TIDAK dipercaya sama sekali.
@@ -208,18 +191,6 @@ function sniffVideo(path: string, field: string): { ext: 'mp4' | 'webm'; mimeTyp
   throw videoRejection(field, 'Format video tidak didukung. Gunakan MP4 atau WebM.')
 }
 
-/** Pindahkan berkas sementara ke tujuan. rename dulu; lintas volume (EXDEV) jatuh ke salin STREAMING. */
-async function moveInto(tempPath: string, destination: string): Promise<void> {
-  try {
-    renameSync(tempPath, destination)
-    return
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
-  }
-  await pipeline(createReadStream(tempPath), createWriteStream(destination))
-  unlinkSync(tempPath)
-}
-
 /** Hapus berkas sementara bila masih ada. Tidak pernah melempar — kegagalan bersih-bersih bukan error user. */
 function discardTempFile(path: string): void {
   try {
@@ -249,7 +220,7 @@ export interface StoreVideoInput {
   modelType: MediaModelType
   modelId: string
   collectionName: MediaCollection
-  /** Path berkas sementara dari multer diskStorage. DIPINDAHKAN, tidak pernah dibaca utuh ke memori. */
+  /** Path berkas sementara dari multer diskStorage. DISALIN ke penyimpanan, tidak pernah dibaca utuh ke memori. */
   tempPath: string
   /** Nama asli berkas dari klien — HANYA dipakai sebagai nama tampilan + basis nama kebab, tidak pernah ekstensi. */
   originalName: string
@@ -277,10 +248,8 @@ export async function storePublicVideo(input: StoreVideoInput): Promise<MediaRow
     const fileName = `${stem}.${ext}`
     const uuid = randomUUID()
 
-    const destination = resolve(PUBLIC_ROOT(), 'media', uuid, fileName)
-    mkdirSync(dirname(destination), { recursive: true })
-    await moveInto(input.tempPath, destination)
-    const size = statSync(destination).size
+    const size = statSync(input.tempPath).size
+    await putFile('public', `media/${uuid}/${fileName}`, input.tempPath, mimeType)
 
     const row = await prismaClient.media.create({
       data: {
@@ -301,8 +270,8 @@ export async function storePublicVideo(input: StoreVideoInput): Promise<MediaRow
     logger.info(`Video diunggah: ${input.modelType} ${input.modelId} [${input.collectionName}] ${fileName} (${size} byte)`)
     return row
   } finally {
-    // Sukses: rename sudah memindahkannya, existsSync false, no-op. Gagal di titik mana pun (ukuran,
-    // sniff, salin, INSERT): berkas sementara tidak boleh tertinggal di storage/private/tmp.
+    // Sukses maupun gagal di titik mana pun (ukuran, sniff, salin, INSERT): berkas sementara tidak
+    // boleh tertinggal di storage/private/tmp.
     discardTempFile(input.tempPath)
   }
 }
@@ -330,32 +299,9 @@ export async function deleteMediaRow(mediaId: string, db: Db = prismaClient): Pr
 
 /**
  * Hapus berkas fisik untuk sekumpulan baris media. Dipanggil SETELAH commit (penghapusan berkas
- * tidak bisa rollback). Tidak pernah melempar — berkas yang sudah hilang bukan error. Path selalu
- * di bawah uploads/ (pagar containment terhadap baris DB yang tercemar).
+ * tidak bisa rollback). Tidak pernah melempar — berkas yang sudah hilang bukan error, dan key yang
+ * tercemar ('..') ditolak deleteObjects().
  */
 export function unlinkMediaFiles(rows: readonly MediaRow[]): void {
-  const root = PUBLIC_ROOT()
-  for (const row of rows) {
-    const rel = storagePathFor(row)
-    if (!rel) continue
-    const full = resolve(root, rel)
-    const within = relative(root, full)
-    if (within.startsWith('..') || isAbsolute(within)) {
-      logger.warn(`Media path di luar uploads/, dilewati: ${rel}`)
-      continue
-    }
-    try {
-      if (existsSync(full)) unlinkSync(full)
-      // Tiap media punya direktori uuid-nya SENDIRI (uploads/media/<uuid>/<nama>), jadi direktori itu
-      // ikut mati bersama berkasnya. rmdir non-rekursif: gagal (ENOTEMPTY) kalau ternyata masih berisi,
-      // jadi ia tidak akan pernah menghapus berkas milik siapa pun. Tanpa ini, tiap penghapusan
-      // meninggalkan direktori kosong di uploads/media selamanya.
-      const dir = dirname(full)
-      if (relative(root, dir) !== '' && existsSync(dir)) rmdirSync(dir)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code === 'ENOTEMPTY' || code === 'ENOENT') continue
-      logger.warn(`Gagal menghapus berkas media ${rel}: ${(error as Error).message}`)
-    }
-  }
+  deleteObjects('public', rows.map(storagePathFor).filter(Boolean))
 }

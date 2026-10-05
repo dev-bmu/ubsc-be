@@ -5,13 +5,11 @@
 // koneksi dengan traffic request. Di proses sendiri, sweep yang lambat memperlambat sweep, bukan
 // memperlambat orang yang sedang checkout.
 //
-// Urutan import sama ketatnya dengan app.ts: dotenv, lalu validasi env, baru modul lain.
+// Urutan import sama ketatnya dengan app.ts: load-env, lalu validasi env, baru modul lain.
 
-import { config } from 'dotenv'
+import './config/load-env'
 import type { PrismaClient } from '@prisma/client'
 import type { Logger } from 'winston'
-
-config({ quiet: true })
 
 let logger: Logger | undefined
 

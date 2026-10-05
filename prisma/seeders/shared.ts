@@ -1,10 +1,11 @@
-import 'dotenv/config'
+import '../../src/config/load-env'
 import { createHash, randomUUID } from 'crypto'
-import { copyFileSync, existsSync, mkdirSync, statSync } from 'fs'
-import { dirname, extname, join, resolve } from 'path'
+import { existsSync, statSync } from 'fs'
+import { extname, join } from 'path'
 import { PrismaClient } from '@prisma/client'
 import { PrismaMariaDb } from '@prisma/adapter-mariadb'
 import { dateOnlyToString, jakartaWallTimeToUtc } from '../../src/utils/clock'
+import { putFile } from '../../src/utils/storage'
 
 // ============================================================================
 // === Infrastruktur bersama untuk seluruh seeder ===
@@ -50,8 +51,6 @@ export const SEED_DEMO = String(process.env.SEED_DEMO || '').toLowerCase() === '
  * seeder setelah env ini diarahkan dengan benar.
  */
 export const LEGACY_ASSETS_DIR = process.env.LEGACY_ASSETS_DIR || 'C:/IT BMU/BMU-LANDINGPAGE/UBSC-LARAVEL'
-
-export const UPLOAD_DIR = resolve(process.cwd(), process.env.UPLOAD_DIR || 'uploads')
 
 // ===== Util =====
 
@@ -125,9 +124,9 @@ interface AttachMediaInput {
  * seeder Laravel: bila koleksi itu sudah punya isi, tidak melakukan apa-apa.
  * Itu yang membuat seluruh seeder idempoten.
  *
- * Tata letak penyimpanan: uploads/media/<uuid>/<nama-kebab>. Folder per-uuid
- * menghilangkan tabrakan nama sepenuhnya, dan URL publiknya tetap terbaca
- * manusia (/uploads/media/<uuid>/reels-ubsc-1.mp4).
+ * Tata letak penyimpanan: key area public 'media/<uuid>/<nama-kebab>' (src/utils/storage.ts —
+ * disk lokal atau bucket R2, sesuai STORAGE_DRIVER). Folder per-uuid menghilangkan tabrakan nama
+ * sepenuhnya, dan URL publiknya tetap terbaca manusia (.../uploads/media/<uuid>/reels-ubsc-1.mp4).
  */
 export async function attachMedia(input: AttachMediaInput): Promise<'dibuat' | 'dilewati' | 'tanpa-berkas'> {
   const existing = await prisma.media.findFirst({
@@ -152,10 +151,8 @@ export async function attachMedia(input: AttachMediaInput): Promise<'dibuat' | '
   const fileName = kebabFileName(originalName)
   const uuid = randomUUID()
 
-  const destination = join(UPLOAD_DIR, 'media', uuid, fileName)
-  mkdirSync(dirname(destination), { recursive: true })
-  copyFileSync(absoluteSource, destination)
-  const size = statSync(destination).size
+  const size = statSync(absoluteSource).size
+  await putFile('public', `media/${uuid}/${fileName}`, absoluteSource, mimeFor(fileName) ?? 'application/octet-stream')
 
   await prisma.media.create({
     data: {

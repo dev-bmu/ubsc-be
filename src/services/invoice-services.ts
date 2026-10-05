@@ -14,7 +14,7 @@ import { bankAccount, groupWhere, qrisSetting } from './manual-payment-services'
 // Satu transaksi = satu invoice bernomor 'UBSC-X-2026-0001' (Transaction.invoiceNumber). Dipakai pelanggan (riwayat
 // pembayaran), FO (meja depan), dan email tagihan membership; HTML-nya disusun mail-templates.ts.
 
-const landing = (path: string) => `${LANDING_URL.replace(/\/+$/, '')}${path}`
+const landing = (path: string) => (/^https?:\/\//.test(path) ? path : `${LANDING_URL.replace(/\/+$/, '')}${path}`)
 
 /** Paket banyak sesi tetap satu invoice; daftar sesinya dipotong supaya muat satu halaman. */
 const MAX_SESSION_LINES = 12

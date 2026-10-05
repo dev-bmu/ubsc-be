@@ -13,8 +13,8 @@
 //   admin    Next 15, panel staff dash.ubsportcenter.co.id               :3010
 //
 // Lokasi checkout di VPS (docs/fase-10.md): api /var/www/ubsc/be, admin /var/www/ubsc/fe, landing
-// /var/www/apps/ubsc-landing. Video ubsc-media di /var/www/ubsc/media, disajikan nginx sebagai
-// cdn.ubsportcenter.co.id (tanpa proses Node).
+// /var/www/apps/ubsc-landing. Video ubsc-media dan semua unggahan ada di Cloudflare R2, disajikan
+// cdn.ubsportcenter.co.id (tanpa VPS) — lihat STORAGE_DRIVER di .env API.
 //
 // Catatan nginx (docs/fase-10.md §4): tiap domain hanya `location /` ke proses Next-nya, gaya sama
 // dengan aplikasi lain di VPS. /api dan /uploads diteruskan `rewrites()` di next.config.ts ke

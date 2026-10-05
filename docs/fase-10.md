@@ -11,7 +11,16 @@ Tata letak di VPS — `cwd` di `ecosystem.config.js` mengacu ke sini:
 /var/www/ubsc/be               repo dev-bmu/ubsc-be       → :4010 + worker cron   api.ubsportcenter.co.id
 /var/www/ubsc/fe               repo dev-bmu/ubsc-dash-fe  → :3010                 dash.ubsportcenter.co.id
 /var/www/apps/ubsc-landing     repo dev-bmu/ubsc-landing  → :3737                 ubsportcenter.co.id
-/var/www/ubsc/media/reels/     isi ubsc-media (video, di luar git) → nginx     cdn.ubsportcenter.co.id
+```
+
+Berkas tidak disimpan di VPS. Semuanya di Cloudflare R2 (§2d):
+
+```
+bucket publik (mis. ubsc)          reels/*.mp4      video ubsc-media         → cdn.ubsportcenter.co.id/reels/...
+                                   uploads/...      CMS, foto member,        → cdn.ubsportcenter.co.id/uploads/...
+                                                    avatar, QRIS
+bucket privat (mis. ubsc-private)  payment-proofs/  bukti bayar              → hanya lewat API (staff/pemilik)
+                                   identity/        dokumen identitas
 ```
 
 Pastikan port 3737, 3010, dan 4010 bebas sebelum mulai:
@@ -27,8 +36,8 @@ Cara request mengalir:
   cookie login: cookie refresh httpOnly host-only per domain juga yang memisahkan sesi pelanggan dan staff.
 - `api.ubsportcenter.co.id` → nginx → API langsung. Hanya mengikuti struktur FE/BE server ini (cek
   kesehatan, akses langsung); landing dan admin **tidak** memanggil domain ini.
-- `cdn.ubsportcenter.co.id` → nginx langsung dari disk `/var/www/ubsc/media`, tanpa Node. Landing
-  memakainya lewat `NEXT_PUBLIC_MEDIA_URL`.
+- `cdn.ubsportcenter.co.id` → custom domain bucket R2 publik, tanpa VPS sama sekali. Landing memakainya
+  lewat `NEXT_PUBLIC_MEDIA_URL`, API lewat `R2_PUBLIC_URL` (URL unggahan `.../uploads/...`).
 
 ---
 
@@ -36,10 +45,10 @@ Cara request mengalir:
 
 Remote ketiga repo memakai alias SSH `github-kantor` (akun GitHub perusahaan):
 
-| Repo lokal | Remote |
-|---|---|
-| `ubsc-api` | `git@github-kantor:dev-bmu/ubsc-be.git` |
-| `ubsc-admin` | `git@github-kantor:dev-bmu/ubsc-dash-fe.git` |
+| Repo lokal     | Remote                                       |
+| -------------- | -------------------------------------------- |
+| `ubsc-api`     | `git@github-kantor:dev-bmu/ubsc-be.git`      |
+| `ubsc-admin`   | `git@github-kantor:dev-bmu/ubsc-dash-fe.git` |
 | `ubsc-landing` | `git@github-kantor:dev-bmu/ubsc-landing.git` |
 
 ```bash
@@ -71,19 +80,30 @@ mysql --version  # MySQL 8
 Folder:
 
 ```bash
-mkdir -p /var/www/ubsc/media/reels /var/www/apps
+mkdir -p /var/www/apps
 ```
 
-Database:
+Database. Password dibuat dari huruf, angka, dan `-` saja: lolos kebijakan `validate_password` MySQL
+(huruf besar, kecil, angka, simbol) dan tidak perlu di-encode di `DATABASE_URL`.
+
+```bash
+echo "Ubsc-$(openssl rand -hex 16)"     # simpan hasilnya
+sudo mysql                               # atau: mysql -u root -p
+```
 
 ```sql
 CREATE DATABASE ubsc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'ubsc'@'localhost' IDENTIFIED BY '<password-kuat>';
+CREATE USER 'ubsc'@'localhost' IDENTIFIED BY '<password>';
 GRANT ALL PRIVILEGES ON ubsc.* TO 'ubsc'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-DNS: A record `ubsportcenter.co.id`, `www`, `dash`, `api`, dan `cdn` → IP VPS. Tunggu resolve sebelum certbot.
+Uji lewat TCP, jalur yang dipakai API: `mysql -u ubsc -p -h 127.0.0.1 ubsc -e "SELECT 1"`. Bila ditolak
+`Access denied for user 'ubsc'@'127.0.0.1'`, buat juga akun `'ubsc'@'127.0.0.1'` dengan password dan
+GRANT yang sama.
+
+DNS: A record `ubsportcenter.co.id`, `www`, `dash`, dan `api` → IP VPS. Tunggu resolve sebelum certbot.
+`cdn` TIDAK ke VPS: record-nya dibuat otomatis saat custom domain dihubungkan ke bucket R2 (§2d).
 
 ---
 
@@ -106,35 +126,45 @@ disetel PM2 saat proses jalan, bukan saat install.
 
 ```bash
 cd /var/www/ubsc/be
-cp .env.example .env && nano .env        # isi sesuai tabel di bawah
+nano .env                                 # isi seperti contoh di bawah (BUKAN .env.local)
 npm ci
 npx prisma migrate deploy                 # semua migrasi
 npm run build                             # tsc → dist/, tulis contract-hash
 npm run seed                              # HANYA deploy pertama: role, permission, akun staff awal
 ```
 
+API membaca `.env.local` bila ada, selain itu `.env` — tidak digabung (`src/config/load-env.ts`). Di laptop
+isinya `.env.local`; di server HANYA `.env`. Templat produksi yang bersih ada di `.env` laptop (tidak
+ikut git): salin isinya ke `/var/www/ubsc/be/.env`, lalu ganti semua `<...>`.
+
 `.env` API — nilai produksi yang berbeda dari dev:
 
-| Kunci | Nilai |
-|---|---|
-| `NODE_ENV` | `production` |
-| `API_BASE_URL` | `https://ubsportcenter.co.id` — **bukan** `api.ubsportcenter.co.id`; dipakai untuk tautan email dan redirect OAuth yang harus mendarat di domain landing |
-| `LANDING_URL` | `https://ubsportcenter.co.id` |
-| `ADMIN_URL` | `https://dash.ubsportcenter.co.id` |
-| `DATABASE_URL` | `mysql://ubsc:<password>@localhost:3306/ubsc` |
-| `CUSTOMER_ACCESS_TOKEN_SECRET` | `openssl rand -hex 32` — wajib ≥ 32 karakter di produksi |
-| `STAFF_ACCESS_TOKEN_SECRET` | `openssl rand -hex 32` — **harus beda** dari customer |
-| `COOKIE_DOMAIN` | kosong (cookie host-only memisahkan sesi landing dan admin — jangan isi `.ubsportcenter.co.id`) |
-| `MAIL_TRANSPORT` | `smtp` |
-| `MAIL_PORT` / `MAIL_SECURE` | `465` / `true`; bila VPS memblokir 465 pakai `587` / `false` (STARTTLS wajib otomatis) |
-| `MAIL_PASSWORD` | password mailbox `no-reply@ubsportcenter.co.id` |
-| `GOOGLE_REDIRECT_URI` | `https://ubsportcenter.co.id/api/auth/customer/google/callback` — daftarkan juga di Google Console |
-| `LANDING_REVALIDATE_URL` | `http://127.0.0.1:3737/revalidate` (langsung ke port Next, bukan lewat nginx) |
-| `LANDING_REVALIDATE_SECRET` | `openssl rand -hex 32` — samakan dengan `REVALIDATE_SECRET` landing |
-| `SEED_PASSWORD` | password akun staff awal; ganti lewat panel setelah login pertama |
+| Kunci                                       | Nilai                                                                                                                                                    |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                                  | `production`                                                                                                                                             |
+| `API_BASE_URL`                              | `https://ubsportcenter.co.id` — **bukan** `api.ubsportcenter.co.id`; dipakai untuk tautan email dan redirect OAuth yang harus mendarat di domain landing |
+| `LANDING_URL`                               | `https://ubsportcenter.co.id`                                                                                                                            |
+| `ADMIN_URL`                                 | `https://dash.ubsportcenter.co.id`                                                                                                                       |
+| `DATABASE_URL`                              | `mysql://ubsc:<password>@localhost:3306/ubsc`                                                                                                            |
+| `CUSTOMER_ACCESS_TOKEN_SECRET`              | `openssl rand -hex 32` — wajib ≥ 32 karakter di produksi                                                                                                 |
+| `STAFF_ACCESS_TOKEN_SECRET`                 | `openssl rand -hex 32` — **harus beda** dari customer                                                                                                    |
+| `COOKIE_DOMAIN`                             | kosong (cookie host-only memisahkan sesi landing dan admin — jangan isi `.ubsportcenter.co.id`)                                                          |
+| `MAIL_TRANSPORT`                            | `smtp`                                                                                                                                                   |
+| `MAIL_PORT` / `MAIL_SECURE`                 | `465` / `true`; bila VPS memblokir 465 pakai `587` / `false` (STARTTLS wajib otomatis)                                                                   |
+| `MAIL_PASSWORD`                             | password mailbox `no-reply@ubsportcenter.co.id`                                                                                                          |
+| `GOOGLE_REDIRECT_URI`                       | `https://ubsportcenter.co.id/api/auth/customer/google/callback` — daftarkan juga di Google Console                                                       |
+| `LANDING_REVALIDATE_URL`                    | `http://127.0.0.1:3737/revalidate` (langsung ke port Next, bukan lewat nginx)                                                                            |
+| `LANDING_REVALIDATE_SECRET`                 | `openssl rand -hex 32` — samakan dengan `REVALIDATE_SECRET` landing                                                                                      |
+| `SEED_PASSWORD`                             | password akun staff awal; ganti lewat panel setelah login pertama                                                                                        |
+| `STORAGE_DRIVER`                            | `r2`                                                                                                                                                     |
+| `R2_ACCOUNT_ID`                             | Account ID Cloudflare (halaman R2, kolom kanan)                                                                                                          |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | dari token API R2 (§2d). Rahasia — jangan ditempel ke chat/commit                                                                                        |
+| `R2_PUBLIC_BUCKET`                          | bucket yang terhubung ke `cdn.ubsportcenter.co.id`                                                                                                       |
+| `R2_PRIVATE_BUCKET`                         | bucket bukti bayar + KTP, harus beda bucket                                                                                                              |
+| `R2_PUBLIC_URL`                             | `https://cdn.ubsportcenter.co.id` — sama dengan `NEXT_PUBLIC_MEDIA_URL` landing                                                                          |
 
 `PORT` tidak perlu diisi di `.env`; PM2 menyetelnya (4010). `MEDIA_DIR` juga tidak perlu: video
-produksi disajikan nginx lewat `cdn.ubsportcenter.co.id`.
+produksi disajikan R2 lewat `cdn.ubsportcenter.co.id`.
 
 Seed hanya sekali. Menjalankannya lagi di DB yang sudah terisi tidak dibutuhkan dan, kalau `SEED_DEMO`
 aktif, menambah data contoh. Setelah seed: login ke admin, ganti password semua akun staff, unggah gambar
@@ -151,12 +181,12 @@ npm run build
 
 `.env.local` landing:
 
-| Kunci | Nilai |
-|---|---|
-| `API_BASE_URL` | `http://127.0.0.1:4010` |
-| `NEXT_PUBLIC_SITE_URL` | `https://ubsportcenter.co.id` |
-| `NEXT_PUBLIC_MEDIA_URL` | `https://cdn.ubsportcenter.co.id` |
-| `REVALIDATE_SECRET` | sama dengan `LANDING_REVALIDATE_SECRET` API |
+| Kunci                   | Nilai                                       |
+| ----------------------- | ------------------------------------------- |
+| `API_BASE_URL`          | `http://127.0.0.1:4010`                     |
+| `NEXT_PUBLIC_SITE_URL`  | `https://ubsportcenter.co.id`               |
+| `NEXT_PUBLIC_MEDIA_URL` | `https://cdn.ubsportcenter.co.id`           |
+| `REVALIDATE_SECRET`     | sama dengan `LANDING_REVALIDATE_SECRET` API |
 
 Tiga kunci pertama dibaca saat **build** — mengubah nilainya berarti build ulang.
 
@@ -175,25 +205,36 @@ npm run build
 
 `.env.local` admin: `API_BASE_URL=http://127.0.0.1:4010`, `NEXT_PUBLIC_ADMIN_URL=https://dash.ubsportcenter.co.id`.
 
-### 2d. Media (ubsc-media → CDN)
+### 2d. Cloudflare R2 (CDN + semua unggahan)
 
-`ubsc-media` berisi video hero, footer, tennis, dan reels cadangan (134 MB). nginx menyajikannya sebagai
-`https://cdn.ubsportcenter.co.id/reels/<nama>.mp4` langsung dari `/var/www/ubsc/media/reels/`. Thumbnail
-`.avif` ikut repo landing dan dilayani Next.
+Sekali, di dashboard Cloudflare:
 
-Kirim sekali dari laptop (Git Bash), lalu ulangi hanya bila ada video baru:
+1. **Bucket publik** (mis. `ubsc`): upload 8 video `ubsc-media` ke folder `reels/`
+   (`reels/hero.mp4`, `reels/Footer.mp4`, ...). Settings → Custom Domains → hubungkan
+   `cdn.ubsportcenter.co.id` (hapus dulu record DNS `cdn` lama bila ada). `r2.dev` biarkan nonaktif.
+2. **Bucket privat** (mis. `ubsc-private`): TANPA custom domain, TANPA r2.dev.
+3. **Token API**: R2 → Manage API tokens → Create → izin **Object Read & Write**, batasi ke kedua bucket.
+   Salin Access Key ID + Secret Access Key langsung ke `.env` API (§2a).
+4. **CORS untuk unduhan PNG E-card**: Rules → Transform Rules → Modify Response Header → jika hostname
+   sama dengan `cdn.ubsportcenter.co.id`, set header statis `Access-Control-Allow-Origin: *`. Tanpa ini
+   E-card tetap terunduh, tapi tanpa foto member.
+
+Objek `uploads/` dikirim API dengan `Cache-Control: public, max-age=31536000, immutable` — nama berkasnya
+selalu acak dan tidak pernah ditimpa. Video `reels/` di-cache sesuai aturan Cloudflare; mengganti video
+dengan nama yang sama butuh purge cache URL-nya.
+
+**Pindah dari disk ke R2** (server yang sudah berjalan dengan berkas di `uploads/` + `storage/private/`):
 
 ```bash
-scp "/c/IT BMU/BMU-SYSTEM/UBSC/ubsc-media/reels/"*.mp4 root@<ip-vps>:/var/www/ubsc/media/reels/
+cd /var/www/ubsc/be
+nano .env                                        # STORAGE_DRIVER=r2 + keenam R2_*
+npm run storage:migrate-r2 -- --dry-run          # daftar berkas yang akan diunggah
+npm run storage:migrate-r2                       # unggah + tulis ulang URL lama '/uploads/...' di DB
+pm2 restart ubsc-api ubsc-worker
 ```
 
-Atau dari WSL dengan rsync (hanya mengirim selisih):
-`MEDIA_REMOTE=root@<ip-vps>:/var/www/ubsc/media ops/scripts/sync-media.sh push`.
-
-Lalu di VPS: `cd /var/www/ubsc/be && MEDIA_DIR=/var/www/ubsc/media ops/scripts/sync-media.sh verify` harus keluar 0.
-
-Browser menyimpan video 7 hari (`expires 7d` di blok CDN). Mengganti video dengan nama yang sama tetap
-terlihat paling lambat 7 hari kemudian; supaya langsung, pakai nama berkas baru dan ubah rujukannya di landing.
+Skrip aman diulang. Berkas lokal tidak dihapus; setelah gambar, video reels, bukti bayar, dan dokumen
+identitas terbuka normal, `uploads/` dan `storage/private/` (kecuali `tmp/`) boleh dihapus.
 
 ---
 
@@ -231,7 +272,6 @@ Ambil sertifikat dulu — blok 443 di bawah merujuk berkasnya, jadi `nginx -t` g
 sudo certbot certonly --nginx -d ubsportcenter.co.id -d www.ubsportcenter.co.id
 sudo certbot certonly --nginx -d dash.ubsportcenter.co.id
 sudo certbot certonly --nginx -d api.ubsportcenter.co.id
-sudo certbot certonly --nginx -d cdn.ubsportcenter.co.id
 ```
 
 Lalu tempel ke bagian bawah `/etc/nginx/conf.d/nginx.conf`:
@@ -342,32 +382,11 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
-
-######### CDN (ubsc-media) #########
-server {
-    listen 80;
-    listen [::]:80;
-    server_name cdn.ubsportcenter.co.id; # the hostname
-    return 302 https://$server_name$request_uri; ## all traffic through port 80 will be forwarded to 443
-}
-
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    ssl_certificate         /etc/letsencrypt/live/cdn.ubsportcenter.co.id/fullchain.pem; #path to your public key
-    ssl_certificate_key     /etc/letsencrypt/live/cdn.ubsportcenter.co.id/privkey.pem; #path to your private key
-    include /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-
-    server_name cdn.ubsportcenter.co.id; # the hostname
-    location / {
-    root /var/www/ubsc/media; # /reels/hero.mp4 -> /var/www/ubsc/media/reels/hero.mp4
-    try_files $uri =404;
-    expires 7d;
-    }
-}
 ```
+
+`cdn.ubsportcenter.co.id` tidak punya blok nginx: domain itu dilayani langsung oleh R2. Bila blok CDN
+lama masih ada di `nginx.conf`, hapus bloknya dulu, `nginx -t && systemctl reload nginx`, baru
+`certbot delete --cert-name cdn.ubsportcenter.co.id` (urutan terbalik membuat `nginx -t` gagal).
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
@@ -386,12 +405,16 @@ IP asli yang ditulis nginx (rate limit per IP tetap benar), baik lewat landing/d
 - `https://ubsportcenter.co.id/api/health`, `https://dash.ubsportcenter.co.id/api/health`, dan
   `https://api.ubsportcenter.co.id/api/health` → `{"status":"ok"}`.
 - `curl -sI https://cdn.ubsportcenter.co.id/reels/hero.mp4` → `200`, `Content-Type: video/mp4`.
-- Beranda: video hero, footer, dan reels tampil (Network tab: dari `cdn.ubsportcenter.co.id`).
+- Beranda: video hero, footer, reels CMS, dan gambar fasilitas/berita tampil (Network tab: semuanya dari
+  `cdn.ubsportcenter.co.id`).
+- Bukti bayar dan dokumen identitas terbuka di admin (dibaca API dari bucket privat). URL bucket privat
+  tidak pernah muncul di browser.
 - Daftar akun baru → email verifikasi masuk → klik tautan → `/verifikasi-email` sukses. Gagal kirim terlihat di
   `pm2 logs ubsc-api` sebagai `[mail] ... GAGAL`.
 - Login admin → ubah fasilitas → beranda landing langsung berubah (revalidasi). Kalau tidak, cek
   `pm2 logs ubsc-api | grep -i revalidasi`.
-- Unggah foto member → tampil di `/uploads/members/...`; QRIS tampil di halaman bayar.
+- Unggah foto member → tampil dari `cdn.ubsportcenter.co.id/uploads/members/...`; QRIS tampil di halaman bayar.
+- Unduh E-card PNG di dashboard pelanggan → foto member ikut tergambar (butuh aturan CORS §2d).
 - Booking → halaman bayar → unggah bukti → setujui di admin → email "Pembayaran dikonfirmasi".
 - `pm2 logs ubsc-worker` menunjukkan sweep `payments:release-expired` tiap menit.
 
@@ -418,7 +441,8 @@ instance per app plus `pm2 reload` — di luar lingkup VPS tunggal (R15).
 
 ## 7. Yang belum dikerjakan (Fase 9, hardening)
 
-- Diet aset: video 134 MB belum di-encode ulang. `/uploads` masih lewat Next + API.
-- Backup DB terjadwal (`mysqldump` + cron) dan backup `uploads/` + `storage/private/`.
+- Diet aset: video 134 MB belum di-encode ulang.
+- Backup DB terjadwal (`mysqldump` + cron). Berkas sudah di R2; objek yatim (hapus di latar yang gagal)
+  belum disapu.
 - Rotasi log nginx dan pemantauan (uptime, ruang disk).
 - Rate limit di nginx untuk `/api/auth/*` sebagai lapisan di luar express-rate-limit.
