@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client'
 import type { MembershipCheckoutPreviewDto, MembershipPaymentDetailDto } from '../../shared/contracts'
+import { formatCalendarDateIntl } from '../../shared/format'
 import { prismaClient } from '../application/database'
 import { ResponseError } from '../error/response-error'
 import type { UserWithRelations } from '../type/user-request'
-import { addDays, addMinutes, dateOnlyToString, now } from '../utils/clock'
+import { addDays, addMinutes, dateOnlyToString, jakartaDate, now } from '../utils/clock'
 import { MembershipCheckoutValidation } from '../validation/membership-checkout-validation'
 import { Validation } from '../validation/Validation'
 import { adminFee, attachProof, bankAccount, holdMinutes, isConfigured, qrisSetting, uniqueCodeMax } from './manual-payment-services'
@@ -41,6 +42,22 @@ function pendingMembershipOf(userId: string) {
   })
 }
 
+/**
+ * Keputusan client 2026-10-05: selama membership masih aktif, paket baru (perpanjangan) hanya bisa
+ * dibeli di 7 hari terakhir masa aktifnya — cukup untuk menyambung tanpa jeda, tanpa menumpuk paket
+ * berbulan-bulan ke depan. Berlaku untuk checkout web; meja depan tetap keputusan staff.
+ */
+const RENEWAL_WINDOW_DAYS = 7
+
+/** Tanggal ('YYYY-MM-DD') pembelian baru dibuka, atau null bila boleh sekarang. */
+function renewalOpensOn(current: { endDate: Date } | null): string | null {
+  if (!current) return null
+  const opens = addDays(dateOnlyToString(current.endDate), -(RENEWAL_WINDOW_DAYS - 1))
+  return jakartaDate() >= opens ? null : opens
+}
+
+const longDate = (key: string) => formatCalendarDateIntl(key, { day: 'numeric', month: 'long', year: 'numeric' })
+
 /** Kartu member butuh foto wajah; foto yang ditolak harus diganti dulu. Foto yang menunggu tinjauan boleh. */
 function assertMemberPhoto(user: UserWithRelations): void {
   if (user.memberPhotoPath && user.memberPhotoStatus !== 'rejected') return
@@ -72,6 +89,8 @@ export async function membershipCheckoutPreview(user: UserWithRelations, planId:
     adminFee: fee,
     uniqueCodeMax: codeMax,
     startsAfterCurrent: current ? addDays(dateOnlyToString(current.endDate), 1) : null,
+    activeUntil: current ? dateOnlyToString(current.endDate) : null,
+    renewalOpensOn: renewalOpensOn(current),
     memberPhotoUrl: user.memberPhotoPath,
     memberPhotoStatus: user.memberPhotoStatus,
     pendingMembershipId: pending?.id ?? null
@@ -93,6 +112,13 @@ export async function startMembershipCheckout(user: UserWithRelations, request: 
   if (pending) {
     if (pending.membershipPlanId === plan.id) return { created: false, membershipId: pending.id }
     const msg = `Anda masih punya pembelian ${pending.membershipPlan?.name ?? 'membership'} yang menunggu pembayaran. Selesaikan atau tunggu hingga kedaluwarsa.`
+    throw new ResponseError(422, msg, 'VALIDATION_ERROR', { membership: [msg] })
+  }
+
+  const current = await currentActiveMembership(prismaClient, user.id)
+  const opens = renewalOpensOn(current)
+  if (current && opens) {
+    const msg = `Membership Anda masih aktif sampai ${longDate(dateOnlyToString(current.endDate))}. Perpanjangan bisa dibeli mulai ${longDate(opens)}.`
     throw new ResponseError(422, msg, 'VALIDATION_ERROR', { membership: [msg] })
   }
 

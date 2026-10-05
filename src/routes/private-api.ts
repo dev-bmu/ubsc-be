@@ -122,7 +122,8 @@ privateRouter.use('/api/admin/reviews', revalidateLandingAfterWrite(['home', 'bo
 privateRouter.use('/api/admin/settings/roles', adminSettingsRoleRoutes)
 privateRouter.use('/api/admin/settings/users', adminSettingsUserRoutes)
 privateRouter.use('/api/admin/settings/schedules', adminSettingsScheduleRoutes)
-privateRouter.use('/api/admin/settings', adminSettingsRoutes)
+// Router ini hanya memuat PUT /gym-traffic, yang tampil di hero dan SectionTwo beranda.
+privateRouter.use('/api/admin/settings', afterHomeWrite, adminSettingsRoutes)
 privateRouter.use('/api/admin/profile', adminProfileRoutes)
 privateRouter.use('/api/admin/email', adminEmailRoutes)
 privateRouter.use('/api/admin/notifications', adminNotificationRoutes)

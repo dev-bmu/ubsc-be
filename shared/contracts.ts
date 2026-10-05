@@ -1395,6 +1395,13 @@ export interface MembershipCheckoutPreviewDto {
   uniqueCodeMax: number
   /** Perpanjangan: masa aktif baru mulai tanggal ini ('YYYY-MM-DD'). null = mulai saat pembayaran diverifikasi. */
   startsAfterCurrent: string | null
+  /** Hari terakhir membership yang sedang aktif ('YYYY-MM-DD'), null bila tidak punya. */
+  activeUntil: string | null
+  /**
+   * Masih aktif dan BELUM masuk 7 hari terakhir: pembelian baru dibuka mulai tanggal ini ('YYYY-MM-DD').
+   * null = boleh membeli sekarang. Checkout menolak 422 selama nilai ini terisi.
+   */
+  renewalOpensOn: string | null
   memberPhotoUrl: string | null
   memberPhotoStatus: MemberPhotoStatus | null
   /** Pembelian yang masih menunggu pembayaran — halaman mengarahkan ke sana, bukan membuat yang baru. */

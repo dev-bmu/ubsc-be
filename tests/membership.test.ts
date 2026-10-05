@@ -16,7 +16,7 @@ import {
 } from '../src/services/membership-admin-services'
 import { membershipCheckoutPreview, startMembershipCheckout } from '../src/services/membership-checkout-services'
 import { createMembership, renewMembership } from '../src/services/membership-services'
-import { addMinutes, dateOnly, setNowForTests } from '../src/utils/clock'
+import { addMinutes, dateOnly, jakartaWallTimeToUtc, setNowForTests } from '../src/utils/clock'
 import { waitForPendingMail } from '../src/utils/mailer'
 import { customerNumber, parseCustomerNumber } from '../src/utils/money'
 import {
@@ -383,13 +383,21 @@ describe('tahap C: tarif Warga UB + checkout web', () => {
     expect((await membershipCheckoutPreview(user, wargaPlanId)).pendingMembershipId).toBe(first.membershipId)
   })
 
-  it('checkout saat masih punya membership aktif = perpanjangan, mulai sehari setelah masa aktifnya', async () => {
+  it('masih aktif: perpanjangan baru dibuka 7 hari terakhir, lalu mulai sehari setelah masa aktifnya', async () => {
     const customer = await createCustomer()
     const current = await createPaidMembership({ userId: customer.id, membershipPlanId: planId, startDate: '2026-10-05' })
     await submitMemberPhoto(customer.id, { buffer: await facePhoto(), originalname: 'wajah.png' })
     const user = await freshUser(customer.id)
 
-    expect((await membershipCheckoutPreview(user, wargaPlanId)).startsAfterCurrent).toBe('2026-11-06')
+    // Aktif sampai 2026-11-05: tujuh hari terakhirnya mulai 2026-10-30.
+    expect(await membershipCheckoutPreview(user, wargaPlanId)).toMatchObject({ activeUntil: '2026-11-05', renewalOpensOn: '2026-10-30' })
+    await expect(startMembershipCheckout(user, { membershipPlanId: wargaPlanId })).rejects.toMatchObject({
+      status: 422,
+      fields: { membership: [expect.stringContaining('30 Oktober 2026')] }
+    })
+
+    setNowForTests(jakartaWallTimeToUtc('2026-10-30', '00:05'))
+    expect(await membershipCheckoutPreview(user, wargaPlanId)).toMatchObject({ renewalOpensOn: null, startsAfterCurrent: '2026-11-06' })
     const { membershipId } = await startMembershipCheckout(user, { membershipPlanId: wargaPlanId })
     const renewal = await membershipOf(membershipId)
     expect([iso(renewal.startDate), iso(renewal.endDate)]).toEqual(['2026-11-06', '2026-12-06'])
