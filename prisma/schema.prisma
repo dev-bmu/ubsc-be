@@ -336,6 +336,15 @@ model EmailVerificationToken {
 // sekali. Staff bisa melihat dan memicu ulang kiriman gagal dari panel admin.
 // Pengganti murah untuk queue, dan cukup pada volume ini.
 
+/// Counter nomor invoice per tahun (WIB). Satu baris per tahun; dinaikkan atomik lewat
+/// INSERT ... ON DUPLICATE KEY UPDATE lastSeq = LAST_INSERT_ID(lastSeq + 1).
+model InvoiceCounter {
+  year    Int @id
+  lastSeq Int
+
+  @@map("invoice_counters")
+}
+
 model EmailLog {
   id        String    @id @default(uuid())
   toEmail   String
@@ -765,9 +774,15 @@ model Transaction {
   userId String?
   user   User?   @relation("TransactionCustomer", fields: [userId], references: [id])
 
-  // Nomor kuitansi: 'UBSC-' + receiptSequence di-pad 6 digit. Auto-increment
-  // berdampingan dengan PK uuid (R3) — @unique yang membuatnya sah di MySQL.
+  // Urutan internal (auto-increment berdampingan dengan PK uuid, R3) — dipakai untuk pengurutan stabil,
+  // TIDAK lagi untuk nomor yang tampil.
   receiptSequence Int @unique @default(autoincrement())
+
+  // Nomor invoice/kuitansi yang tampil di mana pun (halaman bayar, email, Accurate):
+  // 'UBSC-<bulan romawi>-<tahun>-<urutan 4 digit>', urutan direset tiap tahun (WIB). Diterbitkan
+  // invoice_counters di dalam transaksi pembuatnya (allocateInvoiceNumber) — rollback tidak
+  // meninggalkan nomor yang hilang. Permintaan client 2026-10-01.
+  invoiceNumber String @unique @db.VarChar(30)
 
   // Pengganti polymorphic transactionable Laravel. TEPAT SATU yang terisi;
   // invariannya ditegakkan di service, bukan oleh DB.

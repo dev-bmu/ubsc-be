@@ -143,7 +143,7 @@ export interface ResendVerificationDto {
  * menulisnya ke tab baru; isinya sama dengan email tagihan membership.
  */
 export interface InvoiceDto {
-  /** Nomor kuitansi 'UBSC-000031'. */
+  /** Nomor invoice 'UBSC-X-2026-0001' (bulan romawi, tahun, urutan per tahun). */
   number: string
   html: string
 }
@@ -489,7 +489,7 @@ export interface HomeDto {
  * count           jumlah booking pending yang hold-nya belum lewat (hold null = ditahan selamanya, ikut dihitung)
  * awaitingCount   di antaranya yang buktinya sudah diunggah (verificationStatus='awaiting')
  * bookingId       booking terpilih: yang PERTAMA bukan 'awaiting', kalau tidak ada baru elemen pertama
- * receipt         'UBSC-' + receiptSequence di-pad 6 digit; null bila transaksinya tidak terbaca
+ * receipt         nomor invoice 'UBSC-X-2026-0001'; null bila transaksinya tidak terbaca
  * total           amount + adminFee + uniqueCode, MENTAH (Navbar yang memformat), 0 bila transaksi tidak ada
  * holdExpiresAt   ISO-8601 UTC atau null
  * url             tujuan pill. Padanan route('booking.payment', $booking) Laravel, dirakit dari env LANDING_URL
@@ -685,6 +685,8 @@ export interface PaymentDetailDto {
   }
   payment: TransferPaymentDto
   bank: { bank: string; accountNumber: string; accountHolder: string }
+  /** QRIS merchant; bila ada, halaman bayar memakainya alih-alih rekening bank. */
+  qris: PaymentQrisDto | null
   ticket: { checkInUrl: string; checkedInAt: string | null } | null
 }
 
@@ -1213,9 +1215,20 @@ export interface PaymentBankDto {
   accountHolder: string
 }
 
+/**
+ * QRIS statis merchant (keputusan client 2026-10-01): pelanggan memindai gambar ini lalu mengetik
+ * nominal persis (harga + biaya admin + kode unik) sendiri. imageUrl root-relatif '/uploads/qris/...'.
+ */
+export interface PaymentQrisDto {
+  imageUrl: string
+  merchantName: string | null
+}
+
 /** Pengaturan pembayaran tersimpan — bagian dari GET /api/admin/payments, dan balasan POST /settings. */
 export interface PaymentSettingsDto {
   bank: PaymentBankDto
+  /** null = gambar QRIS belum diunggah (POST /api/admin/payments/settings/qris). */
+  qris: PaymentQrisDto | null
   holdMinutes: number
   /** Rupiah per transaksi; 0 = biaya admin dimatikan. */
   adminFee: number
@@ -1232,9 +1245,12 @@ export interface AdminPaymentIndexDto extends PaymentSettingsDto {
 
 /** POST /api/admin/payments/settings */
 export interface PaymentSettingsPayload {
+  /** Rekening opsional ('' boleh) — dipakai hanya bila QRIS belum diunggah. */
   bankName: string
   accountNumber: string
   accountHolder: string
+  /** Nama merchant yang tercetak di QRIS; '' boleh. Gambarnya lewat endpoint unggah tersendiri. */
+  qrisMerchantName: string
   holdMinutes: number
   /** 0..10000 rupiah. */
   adminFee: number
@@ -1412,6 +1428,7 @@ export interface MembershipPaymentDetailDto {
   }
   payment: TransferPaymentDto
   bank: PaymentBankDto
+  qris: PaymentQrisDto | null
 }
 
 // ===== Gym: kartu member, meja check-in, analitik (tahap D) =====

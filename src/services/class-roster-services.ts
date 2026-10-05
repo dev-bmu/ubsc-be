@@ -4,7 +4,7 @@ import { prismaClient } from '../application/database'
 import { TX_OPTIONS } from '../application/transaction'
 import { ResponseError } from '../error/response-error'
 import { addDays, dateOnly, dateOnlyToString, daysInMonth, formatInstant, jakartaDate, translatedDate, weekdayOf } from '../utils/clock'
-import { receiptNumber } from '../utils/money'
+
 import { withConflictRetry } from '../utils/prisma-errors'
 import { BookingAdminValidation } from '../validation/booking-admin-validation'
 import { Validation } from '../validation/Validation'
@@ -120,7 +120,7 @@ async function rosterFor(facility: FacilityWithPricing, unit: UnitWithPrices | n
       phone: b.customerPhone || b.user?.phoneNumber || null,
       status: b.status,
       paymentStatus: tx?.paymentStatus ?? 'UNPAID',
-      receipt: tx ? receiptNumber(tx.receiptSequence) : null,
+      receipt: tx ? tx.invoiceNumber : null,
       checkedInAt: b.checkedInAt ? formatInstant(b.checkedInAt, 'H:i') : null,
       isPackage: b.bookingGroupId != null
     }

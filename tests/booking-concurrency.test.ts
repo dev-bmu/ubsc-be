@@ -193,6 +193,7 @@ describe('kode unik pendingTotal di bawah balapan (R11)', () => {
         adminFee: DEFAULT_ADMIN_FEE,
         uniqueCode: i + 1,
         pendingTotal: base + i + 1,
+        invoiceNumber: `PREFILL-${i + 1}`,
         paymentStatus: 'UNPAID' as const
       }))
     })

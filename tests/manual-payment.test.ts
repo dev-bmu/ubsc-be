@@ -1,11 +1,17 @@
+import { existsSync } from 'fs'
+import { resolve } from 'path'
+import sharp from 'sharp'
 import { prismaClient } from '../src/application/database'
 import { releaseExpiredPayments } from '../src/jobs/release-expired-payments'
 import { ResponseError } from '../src/error/response-error'
 import { createAdminBooking, destroyBooking } from '../src/services/booking-admin-services'
 import { createBooking } from '../src/services/booking-services'
 import { getFinanceReport } from '../src/services/finance-report-services'
+import { staffInvoice } from '../src/services/invoice-services'
 import { approve, attachProof, expire, reject } from '../src/services/manual-payment-services'
 import { createMembership } from '../src/services/membership-services'
+import { removeQrisImage, updatePaymentSettings, uploadQrisImage } from '../src/services/payment-admin-services'
+import { paymentDetail } from '../src/services/payment-services'
 import { addMinutes, jakartaWallTimeToUtc, setNowForTests } from '../src/utils/clock'
 import {
   closeDatabase,
@@ -437,5 +443,73 @@ describe('biaya admin + kode unik (catatan client 2026-09)', () => {
     expect(report.typeBreakdown.reduce((sum, row) => sum + row.revenue, 0)).toBe(expected)
     expect(report.ledger.reduce((sum, row) => sum + row.total, 0)).toBe(expected)
     expect(report.dailyRevenue[9]).toBe(expected)
+  })
+})
+
+// ============================================================================
+// === Nomor invoice tahunan + QRIS statis (permintaan client 2026-10-01) ===
+// ============================================================================
+
+describe('nomor invoice', () => {
+  it("format 'UBSC-<romawi>-<tahun>-<urut>', berurutan, dan urutannya mulai lagi dari 0001 di tahun baru", async () => {
+    setNowForTests(FROZEN_NOW)
+    const invoiceOf = async (startDate: string, endDate: string) => {
+      const membership = await createMembership({ customerName: 'Tamu Invoice', startDate, endDate, amount: 100_000 })
+      return (await prismaClient.transaction.findUniqueOrThrow({ where: { membershipId: membership.id } })).invoiceNumber
+    }
+
+    const first = await invoiceOf('2026-10-05', '2026-11-05')
+    const second = await invoiceOf('2026-12-05', '2027-01-05')
+    expect(first).toMatch(/^UBSC-X-2026-\d{4}$/)
+    expect(Number(second.slice(-4))).toBe(Number(first.slice(-4)) + 1)
+
+    // Tahun yang belum dipakai test lain: counter-nya mulai dari 1.
+    setNowForTests(jakartaWallTimeToUtc('2028-01-02', '09:00'))
+    try {
+      expect(await invoiceOf('2028-01-05', '2028-02-05')).toBe('UBSC-I-2028-0001')
+      expect(await invoiceOf('2028-03-05', '2028-04-05')).toBe('UBSC-I-2028-0002')
+    } finally {
+      setNowForTests(FROZEN_NOW)
+    }
+  })
+})
+
+describe('QRIS statis', () => {
+  it('gambar QRIS tampil di detail bayar dan invoice, rekening boleh kosong; dihapus = kembali ke rekening', async () => {
+    setNowForTests(FROZEN_NOW)
+    const png = await sharp({ create: { width: 320, height: 320, channels: 3, background: '#ffffff' } })
+      .png()
+      .toBuffer()
+    const uploaded = await uploadQrisImage({ buffer: png, originalname: 'qris.png' })
+    const imageUrl = uploaded.qris?.imageUrl as string
+    expect(imageUrl).toMatch(/^\/uploads\/qris\/[0-9a-f-]+\.png$/)
+    const file = resolve(process.cwd(), process.env.UPLOAD_DIR as string, imageUrl.slice('/uploads/'.length))
+    expect(existsSync(file)).toBe(true)
+
+    try {
+      // Rekening dikosongkan: checkout tetap terbuka karena QRIS sudah ada.
+      await updatePaymentSettings({
+        bankName: '',
+        accountNumber: '',
+        accountHolder: '',
+        qrisMerchantName: 'UB SPORT CENTER',
+        holdMinutes: HOLD_MINUTES,
+        adminFee: 500,
+        uniqueCodeMax: 500
+      })
+      const court = await bookCourt('2026-10-07')
+      expect(await paymentDetail(court.customer.id, court.bookingId)).toMatchObject({ qris: { imageUrl, merchantName: 'UB SPORT CENTER' } })
+
+      const html = (await staffInvoice(court.transactionId)).html
+      expect(html).toMatch(new RegExp(`<img src="https?://[^"]+${imageUrl}"`))
+      expect(html).toContain('Scan QRIS')
+      expect(html).not.toContain('Transfer <strong>tepat')
+
+      const removed = await removeQrisImage()
+      expect(removed.qris).toBeNull()
+      expect(existsSync(file)).toBe(false)
+    } finally {
+      await configurePayments(HOLD_MINUTES)
+    }
   })
 })

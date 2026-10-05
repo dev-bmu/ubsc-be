@@ -3,7 +3,7 @@ import { prismaClient } from '../application/database'
 import { TX_OPTIONS } from '../application/transaction'
 import { ResponseError } from '../error/response-error'
 import { addDays, addMonths, dateOnly, dateOnlyToString, jakartaDate } from '../utils/clock'
-import { receiptNumber } from '../utils/money'
+
 import { withConflictRetry } from '../utils/prisma-errors'
 import { openTransfer, recordFreeTransaction } from './manual-payment-services'
 import { membershipPriceFor, membershipTariffCategory, priceCategoryFor } from './pricing-services'
@@ -118,7 +118,7 @@ async function ensureNoOverlappingActiveMembership(
 async function writeHistory(
   tx: Db,
   membershipId: string,
-  transaction: { id: string; amount: number; paymentStatus: string; receiptSequence: number } | null,
+  transaction: { id: string; amount: number; paymentStatus: string; invoiceNumber: string } | null,
   action: string,
   actorId: string | null | undefined,
   actorType: string
@@ -139,7 +139,7 @@ async function writeHistory(
       amount: transaction?.amount ?? null,
       paymentStatus: transaction?.paymentStatus ?? null,
       // Kunci snake_case dipertahankan — ini format data audit yang sama dengan Laravel.
-      metadata: { plan_name: m.membershipPlan?.name ?? null, receipt_number: transaction ? receiptNumber(transaction.receiptSequence) : null }
+      metadata: { plan_name: m.membershipPlan?.name ?? null, receipt_number: transaction ? transaction.invoiceNumber : null }
     }
   })
 }
@@ -301,12 +301,12 @@ export async function openMembershipCheckout(input: MembershipCheckoutInput) {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-type TransactionForHistory = { id: string; amount: number; paymentStatus: string; receiptSequence: number } | null
+type TransactionForHistory = { id: string; amount: number; paymentStatus: string; invoiceNumber: string } | null
 
 function transactionForHistory(tx: Db, membershipId: string): Promise<TransactionForHistory> {
   return tx.transaction.findUnique({
     where: { membershipId },
-    select: { id: true, amount: true, paymentStatus: true, receiptSequence: true }
+    select: { id: true, amount: true, paymentStatus: true, invoiceNumber: true }
   })
 }
 
@@ -375,7 +375,7 @@ export async function writeStatusHistory(membershipId: string, action: string, a
   await prismaClient.$transaction(async (tx) => {
     const transaction = await tx.transaction.findUnique({
       where: { membershipId },
-      select: { id: true, amount: true, paymentStatus: true, receiptSequence: true }
+      select: { id: true, amount: true, paymentStatus: true, invoiceNumber: true }
     })
     await writeHistory(tx, membershipId, transaction, action, actorId, 'admin')
   }, TX_OPTIONS)

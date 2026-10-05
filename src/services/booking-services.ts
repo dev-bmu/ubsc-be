@@ -27,7 +27,7 @@ import {
   translatedDate,
   weekdayOf
 } from '../utils/clock'
-import { receiptNumber, rupiahPlain, slotPriceLabel, transferTotal } from '../utils/money'
+import { rupiahPlain, slotPriceLabel, transferTotal } from '../utils/money'
 import { withConflictRetry } from '../utils/prisma-errors'
 import { randomAlphanumeric } from '../utils/random'
 import { BookingValidation, CreateBookingInput } from '../validation/booking-validation'
@@ -638,7 +638,7 @@ export async function bookingHistory(userId: string): Promise<BookingHistoryItem
       hasTicket: t?.paymentStatus === 'PAID' && (lead.status === 'confirmed' || lead.status === 'completed'),
       // format() Carbon TIDAK diterjemahkan: "17 Aug 2026 10:00".
       checkedInAt: lead.checkedInAt ? formatInstant(lead.checkedInAt, 'd M Y H:i') : null,
-      receipt: t ? receiptNumber(t.receiptSequence) : null,
+      receipt: t ? t.invoiceNumber : null,
       createdAt: formatInstant(lead.createdAt, 'd M Y H:i')
     }
   })

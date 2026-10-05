@@ -16,7 +16,7 @@ import { dateOnlyToString, formatInstant } from '../utils/clock'
 import { logger } from '../utils/logger'
 import { sendMailSafe } from '../utils/mailer'
 import { membershipActiveTemplate, membershipInvoiceTemplate } from '../utils/mail-templates'
-import { customerNumber, parseCustomerNumber, receiptNumber, transferTotal } from '../utils/money'
+import { customerNumber, parseCustomerNumber, transferTotal } from '../utils/money'
 import { isUniqueViolation, withConflictRetry } from '../utils/prisma-errors'
 import { MembershipAdminValidation, MembershipPlanInput } from '../validation/membership-admin-validation'
 import { Validation } from '../validation/Validation'
@@ -56,7 +56,7 @@ const ADMIN_MEMBERSHIP_INCLUDE = {
     orderBy: { createdAt: 'desc' },
     include: {
       membershipPlan: PLAN_NAME,
-      transaction: { select: { receiptSequence: true } },
+      transaction: { select: { invoiceNumber: true } },
       renewedFrom: RENEWED_FROM,
       actor: { select: { name: true } }
     }
@@ -89,7 +89,7 @@ function transactionDto(t: NonNullable<AdminMembershipRow['transaction']>): Memb
     uniqueCode: t.uniqueCode,
     total: transferTotal(t),
     paymentStatus: t.paymentStatus,
-    receiptNumber: receiptNumber(t.receiptSequence),
+    receiptNumber: t.invoiceNumber,
     // Kolom checkout_url Laravel di-drop dari skema (bug 3); diturunkan ke halaman kelola anggota.
     checkoutUrl: `${ADMIN_BASE}/memberships`,
     paidAt: t.paidAt ? formatInstant(t.paidAt, 'Y-m-d H:i') : null
@@ -104,7 +104,7 @@ function historyDto(h: AdminMembershipRow['histories'][number]): MembershipHisto
     startDate: dateOnlyToString(h.startDate),
     endDate: dateOnlyToString(h.endDate),
     transactionId: h.transactionId,
-    receiptNumber: h.transaction ? receiptNumber(h.transaction.receiptSequence) : metadataString(h.metadata, 'receipt_number'),
+    receiptNumber: h.transaction ? h.transaction.invoiceNumber : metadataString(h.metadata, 'receipt_number'),
     renewedFromMembershipId: h.renewedFromMembershipId,
     renewedFromLabel: renewedFromLabel(h.renewedFrom),
     actorName: h.actor?.name ?? null,

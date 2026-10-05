@@ -5,7 +5,7 @@ import { TX_OPTIONS } from '../application/transaction'
 import { ADMIN_URL } from '../config'
 import { ResponseError } from '../error/response-error'
 import { dateOnly, dateOnlyToString, formatInstant, jakartaWallTimeToUtc, now, weekdayOf } from '../utils/clock'
-import { receiptNumber, transferTotal } from '../utils/money'
+import { transferTotal } from '../utils/money'
 import { withConflictRetry } from '../utils/prisma-errors'
 import { randomAlphanumeric } from '../utils/random'
 import { BookingAdminValidation } from '../validation/booking-admin-validation'
@@ -69,7 +69,7 @@ function transactionDto(t: Transaction): BookingTransactionDto {
     paymentStatus: t.paymentStatus,
     checkoutUrl: t.bookingId ? `${ADMIN_BASE}/bookings/${t.bookingId}` : null,
     paidAt: t.paidAt ? formatInstant(t.paidAt, 'Y-m-d H:i') : null,
-    receiptNumber: receiptNumber(t.receiptSequence),
+    receiptNumber: t.invoiceNumber,
     verificationStatus: t.verificationStatus,
     proofUploadedAt: t.proofUploadedAt ? formatInstant(t.proofUploadedAt, 'd M Y H:i') : null,
     proofUrl: t.proofPath ? `/admin/payments/${t.id}/bukti` : null,

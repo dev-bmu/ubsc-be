@@ -1,6 +1,6 @@
 import type { PaymentDecisionDto } from '../../shared/contracts'
 import { LANDING_URL } from '../config'
-import { receiptNumber } from '../utils/money'
+
 import { sendMailSafe } from '../utils/mailer'
 import { membershipActiveTemplate, paymentApprovedTemplate, paymentRejectedTemplate } from '../utils/mail-templates'
 import { PaymentValidation } from '../validation/payment-validation'
@@ -21,7 +21,7 @@ const landing = (path: string) => `${LANDING_URL.replace(/\/+$/, '')}${path}`
 export const MEMBERSHIP_CARD_PATH = '/?kartu=1'
 
 function decisionDto(decision: PaymentDecision, mailQueued: boolean): PaymentDecisionDto {
-  return { transactionId: decision.transactionId, receiptNumber: receiptNumber(decision.receiptSequence), mailQueued }
+  return { transactionId: decision.transactionId, receiptNumber: decision.invoiceNumber, mailQueued }
 }
 
 /** Staff memastikan uangnya masuk: seluruh sesi grup terkonfirmasi. */
@@ -40,7 +40,7 @@ export async function approvePayment(transactionId: string, staffId: string): Pr
         startDate: membership.startDate,
         endDate: membership.endDate,
         customerNumber: membership.customerNumber,
-        payment: { receiptNumber: receiptNumber(decision.receiptSequence), total: decision.total },
+        payment: { receiptNumber: decision.invoiceNumber, total: decision.total },
         cardUrl: landing(MEMBERSHIP_CARD_PATH)
       })
     )
@@ -48,7 +48,7 @@ export async function approvePayment(transactionId: string, staffId: string): Pr
     void sendMailSafe(
       paymentApprovedTemplate({
         to: email,
-        receiptNumber: receiptNumber(decision.receiptSequence),
+        receiptNumber: decision.invoiceNumber,
         amount: decision.total,
         booking: decision.booking ? { ...decision.booking, url: landing(`/booking/${decision.booking.id}/pembayaran`) } : null
       })
@@ -68,7 +68,7 @@ export async function rejectPayment(transactionId: string, staffId: string, requ
     void sendMailSafe(
       paymentRejectedTemplate({
         to: email,
-        receiptNumber: receiptNumber(decision.receiptSequence),
+        receiptNumber: decision.invoiceNumber,
         reason: decision.rejectionReason ?? '-',
         booking: decision.booking,
         // Membership yang ditolak dibeli ulang dari halaman paket, bukan dari /booking.

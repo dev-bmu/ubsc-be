@@ -270,7 +270,7 @@ export function membershipActiveTemplate(input: {
 // style. "Unduh" = tombol cetak browser → Simpan sebagai PDF; tidak ada pustaka PDF di server.
 
 export interface InvoiceView {
-  /** Nomor kuitansi 'UBSC-000031' — juga nomor faktur di export Accurate. */
+  /** Nomor invoice 'UBSC-X-2026-0001' — juga nomor faktur di export Accurate. */
   number: string
   status: 'paid' | 'awaiting' | 'unpaid' | 'void'
   /** Sudah diformat WIB, mis. '28 September 2026, 07:47 WIB'. */
@@ -282,8 +282,10 @@ export interface InvoiceView {
   adminFee: number
   uniqueCode: number
   total: number
-  /** Rekening tujuan — hanya untuk tagihan yang belum dibayar. */
+  /** Rekening tujuan — hanya untuk tagihan yang belum dibayar DAN bila QRIS belum diunggah. */
   bank: { bank: string; accountNumber: string; accountHolder: string } | null
+  /** QRIS statis merchant (URL gambar ABSOLUT, supaya tampil di email) — untuk tagihan belum dibayar. */
+  qris: { imageUrl: string; merchantName: string | null } | null
   /** Halaman bayar/unggah bukti di landing; null untuk tamu tanpa akun atau yang sudah selesai. */
   payUrl: string | null
 }
@@ -305,15 +307,30 @@ function invoiceHtml(v: InvoiceView): string {
     .filter((s): s is string => Boolean(s))
     .map(escapeHtml)
     .join('<br>')
-  const bank = v.bank
+  // QRIS statis: pelanggan memindai lalu mengetik nominal sendiri (keputusan client 2026-10-01).
+  const qris = v.qris
     ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px">
+  <tr><td style="padding:16px;text-align:center">
+    <img src="${escapeHtml(v.qris.imageUrl)}" alt="QRIS ${escapeHtml(v.qris.merchantName ?? 'UB Sport Center')}" width="240" style="display:block;margin:0 auto 10px;width:240px;max-width:100%;height:auto;background:#ffffff;border-radius:8px">
+    ${v.qris.merchantName ? `<div style="font-size:12px;color:#7c2d12;margin-bottom:8px">QRIS a.n. <strong>${escapeHtml(v.qris.merchantName)}</strong></div>` : ''}
+    <div style="font-size:13px;line-height:20px;color:#7c2d12;text-align:left">
+      Scan QRIS ini dengan aplikasi m-banking atau e-wallet, lalu ketik nominal <strong>tepat ${escapeHtml(rupiahPlain(v.total))}</strong>
+      (sampai 3 digit terakhir — kode unik membuat pembayaran Anda bisa dicocokkan). Setelah bayar, unggah bukti lewat tautan
+      pembayaran atau tunjukkan ke petugas.
+    </div>
+  </td></tr>
+</table>`
+    : ''
+  const bank =
+    !v.qris && v.bank
+      ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px">
   <tr><td style="padding:14px 16px;font-size:13px;line-height:20px;color:#7c2d12">
     Transfer <strong>tepat ${escapeHtml(rupiahPlain(v.total))}</strong> (sampai 3 digit terakhir) ke<br>
     <strong>${escapeHtml(v.bank.bank)} ${escapeHtml(v.bank.accountNumber)}</strong> a.n. ${escapeHtml(v.bank.accountHolder)}<br>
     Kode unik membuat transfer Anda bisa dicocokkan. Setelah transfer, unggah bukti lewat tautan pembayaran atau tunjukkan ke petugas.
   </td></tr>
 </table>`
-    : ''
+      : ''
 
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;color:#1a2230">
   <tr>
@@ -331,7 +348,7 @@ function invoiceHtml(v: InvoiceView): string {
   ${v.uniqueCode > 0 ? money('Kode unik', v.uniqueCode) : ''}
   <tr><td style="padding:10px 0;${line};font-weight:700">Total</td>
     <td style="padding:10px 0;${line};text-align:right;font-weight:700;font-size:18px">${escapeHtml(rupiahPlain(v.total))}</td></tr>
-</table>${bank}`
+</table>${qris}${bank}`
 }
 
 /** Halaman cetak invoice (dibuka frontend di tab baru). */
@@ -352,7 +369,11 @@ export function invoicePage(v: InvoiceView): string {
  */
 export function membershipInvoiceTemplate(input: { to: string; name: string; invoice: InvoiceView }): MailInput {
   const v = input.invoice
-  const bank = v.bank ? `\nTransfer tepat ${rupiahPlain(v.total)} ke ${v.bank.bank} ${v.bank.accountNumber} a.n. ${v.bank.accountHolder}.` : ''
+  const bank = v.qris
+    ? `\nBayar lewat QRIS: scan QR di email ini atau di halaman pembayaran, lalu ketik nominal tepat ${rupiahPlain(v.total)}.`
+    : v.bank
+      ? `\nTransfer tepat ${rupiahPlain(v.total)} ke ${v.bank.bank} ${v.bank.accountNumber} a.n. ${v.bank.accountHolder}.`
+      : ''
   return {
     to: input.to,
     subject: `Tagihan ${v.number} — ${v.item.name} — UB Sport Center`,

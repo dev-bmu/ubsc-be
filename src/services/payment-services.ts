@@ -4,8 +4,8 @@ import { prismaClient } from '../application/database'
 import { ADMIN_URL } from '../config'
 import { ResponseError } from '../error/response-error'
 import { dateOnlyToString, formatInstant, now, translatedDate } from '../utils/clock'
-import { receiptNumber, transferTotal } from '../utils/money'
-import { attachProof, bankAccount } from './manual-payment-services'
+import { transferTotal } from '../utils/money'
+import { attachProof, bankAccount, qrisSetting } from './manual-payment-services'
 import { deletePrivateFile, privateFileExists, proofMimeFor, resolvePrivate, storePaymentProof } from './payment-proof-services'
 
 // ============================================================================
@@ -56,7 +56,7 @@ function canUpload(booking: LeadWithPayment): boolean {
 /** Blok pembayaran transfer — sama persis untuk halaman bayar booking dan membership. */
 export function presentTransferPayment(transaction: Transaction, uploadAllowed: boolean): TransferPaymentDto {
   return {
-    receiptNumber: receiptNumber(transaction.receiptSequence),
+    receiptNumber: transaction.invoiceNumber,
     amount: transaction.amount,
     adminFee: transaction.adminFee,
     uniqueCode: transaction.uniqueCode ?? 0,
@@ -108,6 +108,7 @@ async function presentPayment(booking: LeadWithPayment): Promise<PaymentDetailDt
     },
     payment: presentTransferPayment(transaction, canUpload(booking)),
     bank: await bankAccount(),
+    qris: await qrisSetting(),
     // Tiket baru ada setelah uang dikonfirmasi; sebelum itu QR hanya jadi cara masuk tanpa bayar.
     ticket:
       paid && booking.status !== 'cancelled'
@@ -179,7 +180,7 @@ export interface ProofFile {
 async function proofFileFor(transactionId: string, ownerId: string | null): Promise<ProofFile> {
   const transaction = await prismaClient.transaction.findUnique({
     where: { id: transactionId },
-    select: { userId: true, proofPath: true, receiptSequence: true }
+    select: { userId: true, proofPath: true, invoiceNumber: true }
   })
   // ownerId null = staff yang sudah lolos requireAnyPermission di route.
   if (!transaction || (ownerId !== null && transaction.userId !== ownerId)) throw new ResponseError(404, 'Bukti transfer tidak ditemukan')
@@ -189,7 +190,7 @@ async function proofFileFor(transactionId: string, ownerId: string | null): Prom
   return {
     absolutePath: resolvePrivate(transaction.proofPath),
     mime: proofMimeFor(transaction.proofPath),
-    fileName: `bukti-${receiptNumber(transaction.receiptSequence)}.${extension}`
+    fileName: `bukti-${transaction.invoiceNumber}.${extension}`
   }
 }
 

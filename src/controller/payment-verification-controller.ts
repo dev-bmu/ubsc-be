@@ -1,5 +1,5 @@
 import { RequestHandler } from 'express'
-import { listPaymentQueue, updatePaymentSettings } from '../services/payment-admin-services'
+import { listPaymentQueue, removeQrisImage, updatePaymentSettings, uploadQrisImage, UploadedQrisImage } from '../services/payment-admin-services'
 import { staffInvoice } from '../services/invoice-services'
 import { staffProofFile } from '../services/payment-services'
 import { approvePayment, rejectPayment } from '../services/payment-verification-services'
@@ -23,6 +23,23 @@ export const index: RequestHandler = async (req, res, next) => {
 export const updateSettings: RequestHandler = async (req, res, next) => {
   try {
     ok(res, await updatePaymentSettings(req.body))
+  } catch (error) {
+    next(error)
+  }
+}
+
+/** POST /settings/qris — req.file dari multer (field `image`). */
+export const uploadQris: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await uploadQrisImage(req.file as UploadedQrisImage | undefined))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const removeQris: RequestHandler = async (_req, res, next) => {
+  try {
+    ok(res, await removeQrisImage())
   } catch (error) {
     next(error)
   }

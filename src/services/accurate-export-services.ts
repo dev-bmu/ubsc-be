@@ -3,7 +3,7 @@ import { prismaClient } from '../application/database'
 import { TX_OPTIONS } from '../application/transaction'
 import { ResponseError } from '../error/response-error'
 import { addDays, dateOnlyToString, jakartaDate, jakartaWallTimeToUtc } from '../utils/clock'
-import { accurateCustomerId, customerNumber, receiptNumber, rupiahPlain, transferTotal } from '../utils/money'
+import { accurateCustomerId, customerNumber, rupiahPlain, transferTotal } from '../utils/money'
 import { buildXlsx, XlsxCell } from '../utils/xlsx'
 import { AccurateExportValidation } from '../validation/accurate-export-validation'
 import { Validation } from '../validation/Validation'
@@ -90,6 +90,7 @@ function templateRow(header: string[], values: Record<string, XlsxCell>): XlsxCe
 const SALE_SELECT = {
   id: true,
   receiptSequence: true,
+  invoiceNumber: true,
   createdAt: true,
   amount: true,
   adminFee: true,
@@ -268,7 +269,7 @@ export async function accurateInvoiceExport(query: unknown): Promise<{ filename:
     const breakdown = `Harga ${rupiahPlain(sale.amount)} + admin ${rupiahPlain(sale.adminFee)} + kode unik ${rupiahPlain(sale.uniqueCode ?? 0)}`
     return templateRow(INVOICE_HEADER, {
       'CUSTOMER NO': customerIdOf(sale),
-      NUMBER: receiptNumber(sale.receiptSequence),
+      NUMBER: sale.invoiceNumber,
       BRANCH: ACCURATE_BRANCH,
       DATE: { date: jakartaDate(sale.createdAt) },
       DESCRIPTION: `${item.name} - ${customerNameOf(sale)}${unpaid ? ' (belum lunas)' : ''}`,

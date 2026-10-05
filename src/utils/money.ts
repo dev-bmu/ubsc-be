@@ -28,9 +28,15 @@ export function transferTotal(t: { amount: number; adminFee: number; uniqueCode:
   return t.amount + t.adminFee + (t.uniqueCode ?? 0)
 }
 
-/** Nomor kuitansi: 'UBSC-' + receiptSequence 6 digit (R3). */
-export function receiptNumber(receiptSequence: number): string {
-  return `UBSC-${String(receiptSequence).padStart(6, '0')}`
+const ROMAN_MONTHS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
+
+/**
+ * Nomor invoice: 'UBSC-<bulan romawi>-<tahun>-<urutan 4 digit>', mis. 'UBSC-X-2026-0001'. Urutannya
+ * per tahun (invoice_counters); lebih dari 9999 setahun tetap bertambah digit. Tersimpan di
+ * Transaction.invoiceNumber — fungsi ini hanya dipakai saat menerbitkannya.
+ */
+export function invoiceNumber(month: number, year: number, sequence: number): string {
+  return `UBSC-${ROMAN_MONTHS[month - 1]}-${year}-${String(sequence).padStart(4, '0')}`
 }
 
 // ===== Nomor member =====

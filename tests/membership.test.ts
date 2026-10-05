@@ -82,7 +82,7 @@ describe('overlap', () => {
     expect(history).toMatchObject({ action: 'created', transactionId: transaction.id })
     expect(history.metadata).toMatchObject({
       plan_name: 'Bulanan Uji',
-      receipt_number: `UBSC-${String(transaction.receiptSequence).padStart(6, '0')}`
+      receipt_number: transaction.invoiceNumber
     })
 
     const staffId = (await createStaff('Staff Front Office')).id

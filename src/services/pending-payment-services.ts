@@ -1,7 +1,7 @@
 import type { PendingPaymentDto } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
 import { now } from '../utils/clock'
-import { receiptNumber, transferTotal } from '../utils/money'
+import { transferTotal } from '../utils/money'
 
 // ===== Transfer tertunda paling mendesak milik satu customer =====
 // Port dari HandleInertiaRequests::pendingPayment (app/Http/Middleware/HandleInertiaRequests.php:71-102).
@@ -31,7 +31,7 @@ export async function getPendingPayment(userId: string): Promise<PendingPaymentD
     select: {
       id: true,
       holdExpiresAt: true,
-      transaction: { select: { receiptSequence: true, verificationStatus: true, amount: true, adminFee: true, uniqueCode: true } }
+      transaction: { select: { invoiceNumber: true, verificationStatus: true, amount: true, adminFee: true, uniqueCode: true } }
     },
     orderBy: { holdExpiresAt: { sort: 'asc', nulls: 'last' } }
   })
@@ -46,7 +46,7 @@ export async function getPendingPayment(userId: string): Promise<PendingPaymentD
     count: open.length,
     awaitingCount: open.filter((b) => b.transaction?.verificationStatus === 'awaiting').length,
     bookingId: first.id,
-    receipt: tx ? receiptNumber(tx.receiptSequence) : null,
+    receipt: tx ? tx.invoiceNumber : null,
     awaiting: tx?.verificationStatus === 'awaiting',
     total: tx ? transferTotal(tx) : 0,
     holdExpiresAt: first.holdExpiresAt?.toISOString() ?? null,

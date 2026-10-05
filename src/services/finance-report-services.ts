@@ -2,7 +2,7 @@ import { PaymentStatus, Prisma } from '@prisma/client'
 import type { AdminFinanceDto, FinanceBreakdownRowDto, FinanceLedgerRowDto, FinanceStatsDto, FinanceTypeBreakdownDto } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
 import { dateOnly, daysInMonth, formatInstant, jakartaDate, jakartaWallTimeToUtc, now } from '../utils/clock'
-import { receiptNumber, transferTotal } from '../utils/money'
+import { transferTotal } from '../utils/money'
 
 // ============================================================================
 // === Laporan keuangan — port Admin\FinanceReportController ===
@@ -173,7 +173,7 @@ function customerName(t: LedgerTransaction): string {
 function ledgerRow(t: LedgerTransaction): FinanceLedgerRowDto {
   return {
     id: t.id,
-    receiptNumber: receiptNumber(t.receiptSequence),
+    receiptNumber: t.invoiceNumber,
     invoiceId: null,
     checkoutUrl: null,
     customerName: customerName(t),

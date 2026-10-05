@@ -1,12 +1,20 @@
+import { randomUUID } from 'crypto'
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs'
+import { isAbsolute, relative, resolve } from 'path'
 import { Prisma } from '@prisma/client'
+import sharp from 'sharp'
 import type { AdminPaymentIndexDto, AdminPaymentRowDto, PaymentQueueTab, PaymentSettingsDto } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
 import { TX_OPTIONS } from '../application/transaction'
+import { UPLOAD_DIR } from '../config'
+import { UPLOAD_LIMITS } from '../config/upload'
+import { ResponseError } from '../error/response-error'
+import { logger } from '../utils/logger'
 import { dateOnlyToString, formatInstant, jakartaWallTimeToUtc } from '../utils/clock'
-import { receiptNumber, transferTotal } from '../utils/money'
+import { transferTotal } from '../utils/money'
 import { PaymentValidation } from '../validation/payment-validation'
 import { Validation } from '../validation/Validation'
-import { adminFee, bankAccount, holdMinutes, uniqueCodeMax } from './manual-payment-services'
+import { adminFee, bankAccount, holdMinutes, qrisSetting, uniqueCodeMax } from './manual-payment-services'
 
 // ============================================================================
 // === Antrean verifikasi + pengaturan rekening — port Admin\PaymentVerificationController ===
@@ -80,7 +88,7 @@ function presentRow(t: QueueRow): AdminPaymentRowDto {
 
   return {
     id: t.id,
-    receiptNumber: receiptNumber(t.receiptSequence),
+    receiptNumber: t.invoiceNumber,
     amount: t.amount,
     adminFee: t.adminFee,
     uniqueCode,
@@ -141,8 +149,8 @@ export async function listPaymentQueue(query: unknown): Promise<AdminPaymentInde
 
 /** Keadaan pengaturan, dibaca lewat helper yang sama dengan jalur pelanggan. */
 async function paymentSettings(): Promise<PaymentSettingsDto> {
-  const [bank, hold, fee, codeMax] = await Promise.all([bankAccount(), holdMinutes(), adminFee(), uniqueCodeMax()])
-  return { bank, holdMinutes: hold, adminFee: fee, uniqueCodeMax: codeMax }
+  const [bank, qris, hold, fee, codeMax] = await Promise.all([bankAccount(), qrisSetting(), holdMinutes(), adminFee(), uniqueCodeMax()])
+  return { bank, qris, holdMinutes: hold, adminFee: fee, uniqueCodeMax: codeMax }
 }
 
 // ===== 2. Pengaturan rekening, durasi hold, biaya admin, kode unik =====
@@ -162,6 +170,7 @@ export async function updatePaymentSettings(request: unknown): Promise<PaymentSe
     ['payment_bank_name', v.bankName],
     ['payment_bank_account_number', v.accountNumber],
     ['payment_bank_account_holder', v.accountHolder],
+    ['payment_qris_merchant', v.qrisMerchantName],
     ['payment_hold_minutes', String(v.holdMinutes)],
     ['payment_admin_fee', String(v.adminFee)],
     ['payment_unique_code_max', String(v.uniqueCodeMax)]
@@ -171,5 +180,76 @@ export async function updatePaymentSettings(request: unknown): Promise<PaymentSe
     { isolationLevel: TX_OPTIONS.isolationLevel }
   )
 
+  return paymentSettings()
+}
+
+// ===== 3. Gambar QRIS merchant =====
+// Keputusan client 2026-10-01: pembayaran lewat QRIS statis — pelanggan memindai gambar QRIS merchant
+// lalu mengetik nominal (harga + biaya admin + kode unik) sendiri. Gambarnya publik (halaman bayar,
+// invoice, email), jadi tinggal di uploads/, bernama acak. Encode ulang ke PNG LOSSLESS: kompresi lossy
+// bisa mengaburkan modul QR kecil sampai tidak terbaca.
+
+const QRIS_URL_PREFIX = '/uploads/qris/'
+const QRIS_DIR = (): string => resolve(process.cwd(), UPLOAD_DIR, 'qris')
+const QRIS_MAX_EDGE = 1600
+const QRIS_FORMATS = new Set(['jpeg', 'png', 'webp'])
+const { maxWidth: QRIS_MAX_WIDTH, maxHeight: QRIS_MAX_HEIGHT } = UPLOAD_LIMITS.CMS_IMAGE
+export const QRIS_TOO_LARGE_MESSAGE = 'Ukuran gambar QRIS maksimal 5 MB.'
+
+export interface UploadedQrisImage {
+  buffer: Buffer
+  originalname: string
+}
+
+function qrisRejection(message: string): ResponseError {
+  return new ResponseError(422, message, 'VALIDATION_ERROR', { image: [message] })
+}
+
+/** Hapus berkas QRIS lama — hanya yang ditulis modul ini (nilai setting berasal dari DB). Tidak pernah melempar. */
+function unlinkOwnedQris(url: string | null | undefined): void {
+  if (!url || !url.startsWith(QRIS_URL_PREFIX)) return
+  const full = resolve(QRIS_DIR(), url.slice(QRIS_URL_PREFIX.length))
+  const within = relative(QRIS_DIR(), full)
+  if (within === '' || within.startsWith('..') || isAbsolute(within)) return
+  try {
+    if (existsSync(full)) unlinkSync(full)
+  } catch (error) {
+    logger.warn(`Gagal menghapus gambar QRIS lama ${url}: ${(error as Error).message}`)
+  }
+}
+
+/** POST /api/admin/payments/settings/qris — field `image`. Mengganti gambar QRIS yang lama. */
+export async function uploadQrisImage(file: UploadedQrisImage | undefined): Promise<PaymentSettingsDto> {
+  if (!file) throw qrisRejection('Pilih gambar QRIS terlebih dahulu.')
+
+  const limitInputPixels = QRIS_MAX_WIDTH * QRIS_MAX_HEIGHT
+  const meta = await sharp(file.buffer, { limitInputPixels })
+    .metadata()
+    .catch(() => null)
+  if (!meta?.format || !QRIS_FORMATS.has(meta.format)) throw qrisRejection('Gambar QRIS harus JPG, PNG, atau WEBP.')
+
+  const data = await sharp(file.buffer, { limitInputPixels })
+    .rotate()
+    .resize({ width: QRIS_MAX_EDGE, height: QRIS_MAX_EDGE, fit: 'inside', withoutEnlargement: true })
+    .png({ compressionLevel: 9 })
+    .toBuffer()
+  const fileName = `${randomUUID()}.png`
+  mkdirSync(QRIS_DIR(), { recursive: true })
+  writeFileSync(resolve(QRIS_DIR(), fileName), data)
+
+  const previous = (await qrisSetting())?.imageUrl
+  const key = 'payment_qris_image'
+  const value = `${QRIS_URL_PREFIX}${fileName}`
+  await prismaClient.systemSetting.upsert({ where: { key }, create: { key, value }, update: { value } })
+  unlinkOwnedQris(previous)
+  return paymentSettings()
+}
+
+/** DELETE /api/admin/payments/settings/qris — halaman bayar kembali memakai rekening bank. */
+export async function removeQrisImage(): Promise<PaymentSettingsDto> {
+  const previous = (await qrisSetting())?.imageUrl
+  const key = 'payment_qris_image'
+  await prismaClient.systemSetting.upsert({ where: { key }, create: { key, value: '' }, update: { value: '' } })
+  unlinkOwnedQris(previous)
   return paymentSettings()
 }

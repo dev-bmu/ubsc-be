@@ -91,7 +91,7 @@ describe('pelanggan', () => {
     const { adminFee, uniqueCode, total, receiptNumber } = payment.body.data.payment
     expect(adminFee).toBe(500)
     expect(total).toBe(250_000 + adminFee + uniqueCode)
-    expect(receiptNumber).toMatch(/^UBSC-\d{6}$/)
+    expect(receiptNumber).toMatch(/^UBSC-X-2026-\d{4}$/)
 
     // 3. Unggah bukti.
     const uploaded = await request(web)

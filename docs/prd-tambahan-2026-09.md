@@ -868,3 +868,25 @@ semua kartu.
   faktur = satu baris item seharga total transfer; rinciannya dicatat di ITEM NOTES. Item `UBSC-ADMIN` dan
   `UBSC-KODEUNIK` tidak dipakai lagi. Panel Export Accurate pindah ke kepala card tabel ledger.
 - **Export penerimaan penjualan** menunggu template impor resminya dari Accurate (kolomnya tidak bisa ditebak).
+
+### 7.5 Catatan client 2026-10-01
+
+- **Pembayaran pakai QRIS statis.**
+  - Admin mengunggah gambar QRIS merchant di Pembayaran → Pengaturan Pembayaran
+    (`POST/DELETE /admin/payments/settings/qris`). Gambar disimpan ulang sebagai PNG lossless di
+    `/uploads/qris/`, dan setting `payment_qris_image` menyimpan URL-nya.
+  - Nama merchant tersimpan di `payment_qris_merchant`.
+  - Halaman bayar landing, invoice, dan email tagihan menampilkan QRIS. Pelanggan memindai lalu
+    mengetik nominal persis (harga + biaya admin + kode unik). Verifikasi tetap manual lewat bukti
+    bayar, sama seperti transfer.
+  - Rekening bank menjadi cadangan opsional: hanya tampil bila QRIS belum diunggah. Checkout terbuka
+    bila salah satu dari keduanya terisi.
+  - QRIS dinamis (nominal tertanam, butuh payment gateway) belum dikerjakan.
+- **Nomor invoice `UBSC-<bulan romawi>-<tahun>-<urutan>`**, mis. `UBSC-X-2026-0001`.
+  - Urutan 4 digit direset tiap tahun (WIB). Bulan diambil dari tanggal transaksi dibuat.
+  - Disimpan di `Transaction.invoiceNumber` (unik). Nomor dialokasikan dari tabel `invoice_counters`
+    di dalam transaksi DB yang sama, jadi rollback tidak meninggalkan lubang.
+  - `receiptSequence` tetap ada, hanya untuk urutan.
+  - Migrasi `20261001090000` mengisi nomor baris lama.
+  - Data pembayaran dev (transaksi, booking, bukti) dihapus atas permintaan client, sehingga nomor
+    mulai dari 0001.

@@ -3,9 +3,9 @@ import { Prisma, UserCategory } from '@prisma/client'
 import { prismaClient } from '../application/database'
 import { TX_OPTIONS } from '../application/transaction'
 import { ResponseError } from '../error/response-error'
-import { dateOnlyToString, now } from '../utils/clock'
+import { dateOnlyToString, jakartaDate, now } from '../utils/clock'
 import { logger } from '../utils/logger'
-import { customerNumber, transferTotal } from '../utils/money'
+import { customerNumber, invoiceNumber, transferTotal } from '../utils/money'
 import { isUniqueViolation, withConflictRetry } from '../utils/prisma-errors'
 import { activatePendingMembership, lapsePendingMembership } from './membership-services'
 import { deletePrivateFile } from './payment-proof-services'
@@ -86,9 +86,38 @@ export async function bankAccount(): Promise<{ bank: string; accountNumber: stri
   return { bank, accountNumber, accountHolder }
 }
 
+/**
+ * QRIS statis merchant (keputusan client 2026-10-01: pembayaran lewat QRIS, pelanggan mengetik
+ * nominalnya sendiri). null = belum diunggah; halaman bayar lalu jatuh ke rekening bank.
+ */
+export async function qrisSetting(): Promise<{ imageUrl: string; merchantName: string | null } | null> {
+  const [imageUrl, merchantName] = await Promise.all([setting('payment_qris_image', ''), setting('payment_qris_merchant', '')])
+  return imageUrl ? { imageUrl, merchantName: merchantName || null } : null
+}
+
+/** Checkout online hanya dibuka bila pelanggan punya cara membayar: QRIS atau rekening bank. */
 export async function isConfigured(): Promise<boolean> {
-  const account = await bankAccount()
-  return account.bank !== '' && account.accountNumber !== ''
+  const [account, qris] = await Promise.all([bankAccount(), qrisSetting()])
+  return qris !== null || (account.bank !== '' && account.accountNumber !== '')
+}
+
+// ===== Nomor invoice =====
+
+/**
+ * Terbitkan nomor invoice berikutnya untuk tahun berjalan (WIB). WAJIB di dalam transaksi pembuat
+ * baris transaksinya: kenaikan counter ikut di-rollback bila transaksinya gagal, jadi tidak ada nomor
+ * yang hilang. Baris counter terkunci sampai commit — pembuatan transaksi berbaris di sini, dan itu
+ * memang yang menjamin urutan tanpa celah. Kunci ini selalu diambil TERAKHIR (setelah kunci bisnis
+ * pemanggil), jadi tidak membentuk siklus. Saat tahun baru, dua sesi pertama yang sama-sama
+ * menyisipkan barisnya bisa deadlock sekali; withConflictRetry di pemanggil mengulangnya.
+ */
+async function allocateInvoiceNumber(tx: Db): Promise<string> {
+  const day = jakartaDate(now())
+  const year = Number(day.slice(0, 4))
+  await tx.$executeRaw`INSERT INTO invoice_counters (year, lastSeq) VALUES (${year}, LAST_INSERT_ID(1))
+    ON DUPLICATE KEY UPDATE lastSeq = LAST_INSERT_ID(lastSeq + 1)`
+  const [row] = await tx.$queryRaw<Array<{ seq: bigint | number }>>`SELECT LAST_INSERT_ID() AS seq`
+  return invoiceNumber(Number(day.slice(5, 7)), year, Number(row.seq))
 }
 
 // ===== Grup booking & kunci =====
@@ -194,6 +223,7 @@ export async function openTransfer(
 
   const fee = await adminFee(tx)
   const base = amount + fee
+  const number = await allocateInvoiceNumber(tx)
 
   // Coba-insert, bukan pre-check: request lain bisa mengambil kode di antara baca dan tulis kita,
   // dan UNIQUE index-lah yang memutuskan.
@@ -201,6 +231,7 @@ export async function openTransfer(
     try {
       return await tx.transaction.create({
         data: {
+          invoiceNumber: number,
           userId,
           bookingId: subject.bookingId ?? null,
           membershipId: subject.membershipId ?? null,
@@ -227,9 +258,10 @@ export async function openTransfer(
  * dan tanpa kode unik — tidak ada yang ditransfer. Yang bernominal selalu lewat openTransfer + lunas
  * belakangan (approve), termasuk membership meja depan sejak 2026-09-28.
  */
-export function recordFreeTransaction(tx: Db, subject: TransferSubject, userId: string | null) {
+export async function recordFreeTransaction(tx: Db, subject: TransferSubject, userId: string | null) {
   return tx.transaction.create({
     data: {
+      invoiceNumber: await allocateInvoiceNumber(tx),
       userId,
       bookingId: subject.bookingId ?? null,
       membershipId: subject.membershipId ?? null,
@@ -292,7 +324,7 @@ export async function attachProof(transactionId: string, storedPath: string): Pr
 /** Hasil approve/reject: cukup untuk menyusun email pelanggan SETELAH commit, tanpa query ulang. */
 export interface PaymentDecision {
   transactionId: string
-  receiptSequence: number
+  invoiceNumber: string
   /** Harga + biaya admin + kode unik — nominal yang ditransfer pelanggan. */
   total: number
   rejectionReason: string | null
@@ -308,7 +340,7 @@ async function decisionInfo(tx: Db, transactionId: string): Promise<PaymentDecis
     where: { id: transactionId },
     select: {
       id: true,
-      receiptSequence: true,
+      invoiceNumber: true,
       amount: true,
       adminFee: true,
       uniqueCode: true,
@@ -329,7 +361,7 @@ async function decisionInfo(tx: Db, transactionId: string): Promise<PaymentDecis
   })
   return {
     transactionId: t.id,
-    receiptSequence: t.receiptSequence,
+    invoiceNumber: t.invoiceNumber,
     total: transferTotal(t),
     rejectionReason: t.rejectionReason,
     customer: { email: t.user?.email ?? null, name: t.user?.name ?? null },

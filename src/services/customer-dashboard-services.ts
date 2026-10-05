@@ -13,7 +13,7 @@ import type {
 import { prismaClient } from '../application/database'
 import { ResponseError } from '../error/response-error'
 import { dateOnlyToString, formatInstant, now } from '../utils/clock'
-import { receiptNumber, transferTotal } from '../utils/money'
+import { transferTotal } from '../utils/money'
 import { CustomerReviewValidation } from '../validation/customer-review-validation'
 import { Validation } from '../validation/Validation'
 import { adminFee, uniqueCodeMax } from './manual-payment-services'
@@ -317,6 +317,7 @@ export async function storeReview(userId: string, request: unknown): Promise<MyR
 const CUSTOMER_TRANSACTION_SELECT = {
   id: true,
   receiptSequence: true,
+  invoiceNumber: true,
   amount: true,
   adminFee: true,
   uniqueCode: true,
@@ -371,7 +372,7 @@ function toTransactionDto(row: CustomerTransactionRow): CustomerTransactionDto {
 
   return {
     id: row.id,
-    receiptNumber: receiptNumber(row.receiptSequence),
+    receiptNumber: row.invoiceNumber,
     invoiceId: null,
     amount: row.amount,
     transferTotal: transferTotal(row),

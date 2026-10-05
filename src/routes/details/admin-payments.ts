@@ -2,12 +2,16 @@ import express from 'express'
 import { PERMISSIONS } from '../../config/permissions'
 import * as ctrl from '../../controller/payment-verification-controller'
 import { requireAnyPermission, requirePermission } from '../../middleware/permission-middleware'
+import { singleFileUpload } from '../../middleware/upload-middleware'
+import { QRIS_TOO_LARGE_MESSAGE } from '../../services/payment-admin-services'
 
 // ===== Route verifikasi pembayaran (staff) =====
 // Prefix penuh (/api/admin/payments) dideklarasikan di private-api.ts.
 //
 //   GET  /api/admin/payments?tab=awaiting|rejected|paid  antrean verifikasi (maks 100, metode manual) — Fase 8D
 //   POST /api/admin/payments/settings                    rekening tujuan + durasi hold — Fase 8D
+//   POST /api/admin/payments/settings/qris               unggah gambar QRIS merchant (field image) — 2026-10-01
+//   DELETE /api/admin/payments/settings/qris             hapus QRIS, halaman bayar kembali ke rekening
 //   POST /api/admin/payments/:transactionId/approve
 //   POST /api/admin/payments/:transactionId/reject       body { reason }
 //   GET  /api/admin/payments/:transactionId/bukti        stream bukti transfer
@@ -24,6 +28,9 @@ const adminPaymentRoutes = express.Router()
 
 adminPaymentRoutes.get('/', requireAnyPermission(PAYMENT_VERIFIERS), ctrl.index)
 adminPaymentRoutes.post('/settings', requirePermission(PERMISSIONS.PAYMENTS_MANAGE), ctrl.updateSettings)
+const qrisUpload = singleFileUpload('image', 'CMS_IMAGE', { tooLargeMessage: QRIS_TOO_LARGE_MESSAGE })
+adminPaymentRoutes.post('/settings/qris', requirePermission(PERMISSIONS.PAYMENTS_MANAGE), qrisUpload, ctrl.uploadQris)
+adminPaymentRoutes.delete('/settings/qris', requirePermission(PERMISSIONS.PAYMENTS_MANAGE), ctrl.removeQris)
 adminPaymentRoutes.post('/:transactionId/approve', requireAnyPermission(PAYMENT_VERIFIERS), ctrl.approve)
 adminPaymentRoutes.post('/:transactionId/reject', requireAnyPermission(PAYMENT_VERIFIERS), ctrl.reject)
 adminPaymentRoutes.get('/:transactionId/bukti', requireAnyPermission(PAYMENT_VERIFIERS), ctrl.proofFile)

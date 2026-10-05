@@ -4,9 +4,8 @@ import { z } from 'zod'
 
 const REASON_REQUIRED = 'Tulis alasan penolakan agar pengguna tahu harus memperbaiki apa.'
 
-/** `required|string|max:N` + TrimStrings Laravel: spasi-saja dianggap kosong. */
-const requiredText = (required: string, max: number, tooLong: string) =>
-  z.string({ error: required }).trim().min(1, { error: required }).max(max, { error: tooLong })
+/** Teks opsional: null/absen = '' (setting tersimpan sebagai string kosong), dipangkas, dibatasi panjang. */
+const optionalText = (max: number, tooLong: string) => z.preprocess((value: unknown) => value ?? '', z.string().trim().max(max, { error: tooLong }))
 
 /** '' / spasi-saja / null -> undefined, supaya `required` yang gagal, bukan coercion ke 0. */
 const emptyToUndefined = (value: unknown): unknown =>
@@ -40,9 +39,12 @@ export class PaymentValidation {
    * uniqueCodeMax baru (catatan client 2026-09), bukan dari Laravel.
    */
   static readonly SETTINGS = z.object({
-    bankName: requiredText('Nama bank wajib diisi.', 60, 'Nama bank maksimal 60 karakter.'),
-    accountNumber: requiredText('Nomor rekening wajib diisi.', 40, 'Nomor rekening maksimal 40 karakter.'),
-    accountHolder: requiredText('Nama pemilik rekening wajib diisi.', 80, 'Nama pemilik rekening maksimal 80 karakter.'),
+    // Rekening opsional sejak QRIS (2026-10-01): dipakai hanya bila gambar QRIS belum diunggah.
+    bankName: optionalText(60, 'Nama bank maksimal 60 karakter.'),
+    accountNumber: optionalText(40, 'Nomor rekening maksimal 40 karakter.'),
+    accountHolder: optionalText(80, 'Nama pemilik rekening maksimal 80 karakter.'),
+    /** Nama merchant yang tercetak di QRIS (ditampilkan di bawah gambar). */
+    qrisMerchantName: optionalText(80, 'Nama merchant QRIS maksimal 80 karakter.'),
     holdMinutes: z.preprocess(
       emptyToUndefined,
       z.coerce

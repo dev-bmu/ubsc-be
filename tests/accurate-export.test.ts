@@ -118,7 +118,7 @@ describe('export Accurate', () => {
     // Satu baris per faktur seharga total transfer (harga + admin + kode unik), tanpa baris terpisah.
     expect(sheet).toMatchObject({
       A2: 'WEB.0002',
-      B2: `UBSC-${String(t2.receiptSequence).padStart(6, '0')}`,
+      B2: t2.invoiceNumber,
       C2: ACCURATE_BRANCH,
       D2: String((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86_400_000), // nomor seri tanggal Excel
       AU2: 'GYM-1B',

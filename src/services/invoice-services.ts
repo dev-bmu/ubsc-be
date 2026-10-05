@@ -5,13 +5,13 @@ import { LANDING_URL } from '../config'
 import { ResponseError } from '../error/response-error'
 import { dateOnlyToString, jakartaDate, jakartaHm, translatedDate } from '../utils/clock'
 import { invoicePage, InvoiceView } from '../utils/mail-templates'
-import { customerNumber, receiptNumber, transferTotal } from '../utils/money'
-import { bankAccount, groupWhere } from './manual-payment-services'
+import { customerNumber, transferTotal } from '../utils/money'
+import { bankAccount, groupWhere, qrisSetting } from './manual-payment-services'
 
 // ============================================================================
 // === Invoice / kuitansi per transaksi (PRD tambahan 2026-09, catatan client 2026-09-28) ===
 // ============================================================================
-// Satu transaksi = satu invoice bernomor kuitansi (UBSC-000031). Dipakai pelanggan (riwayat
+// Satu transaksi = satu invoice bernomor 'UBSC-X-2026-0001' (Transaction.invoiceNumber). Dipakai pelanggan (riwayat
 // pembayaran), FO (meja depan), dan email tagihan membership; HTML-nya disusun mail-templates.ts.
 
 const landing = (path: string) => `${LANDING_URL.replace(/\/+$/, '')}${path}`
@@ -22,7 +22,7 @@ const MAX_SESSION_LINES = 12
 const INVOICE_SELECT = {
   id: true,
   userId: true,
-  receiptSequence: true,
+  invoiceNumber: true,
   amount: true,
   adminFee: true,
   uniqueCode: true,
@@ -82,13 +82,13 @@ async function loadInvoice(transactionId: string): Promise<{ userId: string | nu
 
   const status = statusOf(t)
   const open = status === 'unpaid' || status === 'awaiting'
-  const account = status === 'unpaid' ? await bankAccount() : null
+  const [account, qris] = status === 'unpaid' ? await Promise.all([bankAccount(), qrisSetting()]) : [null, null]
   const payPath = t.membership ? `/membership/${t.membership.id}/pembayaran` : t.booking ? `/booking/${t.booking.id}/pembayaran` : null
 
   return {
     userId: t.userId,
     view: {
-      number: receiptNumber(t.receiptSequence),
+      number: t.invoiceNumber,
       status,
       issuedAt: wibStamp(t.createdAt),
       paidAt: t.paidAt ? wibStamp(t.paidAt) : null,
@@ -104,6 +104,7 @@ async function loadInvoice(transactionId: string): Promise<{ userId: string | nu
       uniqueCode: t.uniqueCode ?? 0,
       total: transferTotal(t),
       bank: account?.bank && account.accountNumber ? account : null,
+      qris: qris ? { imageUrl: landing(qris.imageUrl), merchantName: qris.merchantName } : null,
       // Tamu tanpa akun tidak bisa membuka halaman bayar landing.
       payUrl: open && t.userId && payPath ? landing(payPath) : null
     }

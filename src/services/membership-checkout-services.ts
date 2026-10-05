@@ -6,7 +6,7 @@ import type { UserWithRelations } from '../type/user-request'
 import { addDays, addMinutes, dateOnlyToString, now } from '../utils/clock'
 import { MembershipCheckoutValidation } from '../validation/membership-checkout-validation'
 import { Validation } from '../validation/Validation'
-import { adminFee, attachProof, bankAccount, holdMinutes, isConfigured, uniqueCodeMax } from './manual-payment-services'
+import { adminFee, attachProof, bankAccount, holdMinutes, isConfigured, qrisSetting, uniqueCodeMax } from './manual-payment-services'
 import { currentActiveMembership, openMembershipCheckout } from './membership-services'
 import { deletePrivateFile, storePaymentProof } from './payment-proof-services'
 import { presentTransferPayment, UploadedFile } from './payment-services'
@@ -147,7 +147,8 @@ async function presentMembershipPayment(membership: OwnedMembership): Promise<Me
       holdExpiresAt: t.paymentStatus === 'UNPAID' && !t.proofPath ? (t.expiresAt?.toISOString() ?? null) : null
     },
     payment: presentTransferPayment(t, canUploadProof(membership)),
-    bank: await bankAccount()
+    bank: await bankAccount(),
+    qris: await qrisSetting()
   }
 }
 

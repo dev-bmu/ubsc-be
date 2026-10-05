@@ -4,7 +4,7 @@ import { prismaClient } from '../application/database'
 import { checkInUrl } from './payment-services'
 import { ResponseError } from '../error/response-error'
 import { dateOnly, dateOnlyToString, formatInstant, jakartaDate, now, translatedDate } from '../utils/clock'
-import { receiptNumber } from '../utils/money'
+
 import { BookingAdminValidation } from '../validation/booking-admin-validation'
 import { Validation } from '../validation/Validation'
 
@@ -37,7 +37,7 @@ function presentBase(b: CheckInRow) {
   const tx = payableTransaction(b)
   return {
     id: b.id,
-    receiptNumber: tx ? receiptNumber(tx.receiptSequence) : `#${b.id}`,
+    receiptNumber: tx ? tx.invoiceNumber : `#${b.id}`,
     customer: {
       // present() Laravel MENGUTAMAKAN nama user atas customer_name (kebalikan transformBooking).
       name: b.user?.name ?? b.customerName ?? '-',
@@ -83,7 +83,7 @@ export async function checkInIndex(query: unknown): Promise<CheckInIndexDto> {
   const filtered = bookings.filter((b) => {
     if (q === '') return true
     const tx = payableTransaction(b)
-    const haystack = [b.user?.name, b.customerName, b.user?.phoneNumber, b.customerPhone, tx ? receiptNumber(tx.receiptSequence) : null, `#${b.id}`]
+    const haystack = [b.user?.name, b.customerName, b.user?.phoneNumber, b.customerPhone, tx ? tx.invoiceNumber : null, `#${b.id}`]
       .filter((part): part is string => Boolean(part))
       .join(' ')
     return haystack.toLowerCase().includes(needle)

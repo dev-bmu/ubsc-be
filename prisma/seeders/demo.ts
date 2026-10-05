@@ -162,6 +162,8 @@ export async function seedBookings() {
 
     await prisma.transaction.create({
       data: {
+        // Data demo sengaja di luar seri UBSC-<romawi>-<tahun>-<urut> supaya tidak memakan nomor asli.
+        invoiceNumber: `DEMO-${booking.id.slice(0, 8).toUpperCase()}`,
         userId: user.id,
         // Pengganti polymorphic transactionable. Kolom xenditInvoiceId dan
         // checkoutUrl memang tidak ada lagi (bug 3).
