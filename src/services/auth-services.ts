@@ -245,6 +245,14 @@ async function issueSession(
 // 2. REFRESH (rotasi + reuse detection)
 // ---------------------------------------------------------------------------
 
+/**
+ * Jendela toleransi rotasi. Dua tab (atau dua request) yang memulihkan sesi hampir bersamaan
+ * mengirim token yang SAMA; yang kalah tiba sepersekian detik setelah token itu dirotasi. Itu
+ * balapan biasa, bukan pencurian — tanpa toleransi ini, membuka dua tab sekaligus mencabut semua
+ * sesi pelanggan.
+ */
+const ROTATION_GRACE_MS = 30_000
+
 export const refreshAuth = async (rt: string | undefined, audience: TokenAudience, ipAddress: string | null, res: Response) => {
   if (!rt) throw new ResponseError(401, 'Sesi tidak ditemukan. Silakan masuk kembali.', 'UNAUTHENTICATED')
 
@@ -271,10 +279,20 @@ export const refreshAuth = async (rt: string | undefined, audience: TokenAudienc
     throw new ResponseError(401, 'Sesi kedaluwarsa. Silakan masuk kembali.', 'UNAUTHENTICATED')
   }
 
+  // Token yang baru saja dirotasi (penggantinya masih sah, < ROTATION_GRACE_MS) = balapan antar tab:
+  // dijawab access token di bawah, TANPA rotasi lagi dan tanpa menyentuh cookie — browser sudah
+  // menyimpan token pengganti dari balasan yang menang.
+  const replacement = stored.revoked && stored.replacedBy ? await prismaClient.refreshToken.findUnique({ where: { id: stored.replacedBy } }) : null
+  const benignRace =
+    replacement !== null &&
+    !replacement.revoked &&
+    replacement.expiresAt > new Date() &&
+    Date.now() - replacement.createdAt.getTime() <= ROTATION_GRACE_MS
+
   // Token sudah dirotasi tapi dipakai lagi = kemungkinan dicuri. Hapus SEMUA
   // sesi user di kedua audience: kalau satu device dikompromikan, memaksa login
   // ulang hanya di satu sisi bukan jawaban.
-  if (stored.revoked) {
+  if (stored.revoked && !benignRace) {
     logger.warn(`TOKEN_REUSE_DETECTED userId=${stored.userId} audience=${audience} ip=${ipAddress ?? '-'}`)
     await prismaClient.refreshToken.deleteMany({ where: { userId: stored.userId } })
     clearAuthCookies(res, audience)
@@ -298,6 +316,11 @@ export const refreshAuth = async (rt: string | undefined, audience: TokenAudienc
     await prismaClient.refreshToken.deleteMany({ where: { userId: user.id, audience } })
     clearAuthCookies(res, audience)
     throw new ResponseError(403, 'Akun ini tidak punya akses ke panel staff', 'FORBIDDEN')
+  }
+
+  if (benignRace) {
+    const permissions = user.role ? await getPermissionsByRole(user.role.name) : []
+    return { accessToken: signAccessToken({ userId: user.id, role: user.role?.name ?? null }, audience), user: publicUser(user, permissions) }
   }
 
   // Rotasi: token lama ditandai revoked (bukan dihapus) supaya reuse terdeteksi.
