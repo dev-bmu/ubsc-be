@@ -24,6 +24,7 @@ import adminProfileRoutes, { adminEmailRoutes } from './details/admin-profile'
 import adminPromoRoutes from './details/admin-promo'
 import adminReelRoutes from './details/admin-reels'
 import adminReviewRoutes from './details/admin-reviews'
+import adminSeoPageRoutes from './details/admin-seo-pages'
 import adminSettingsRoutes from './details/admin-settings'
 import adminSettingsRoleRoutes from './details/admin-settings-roles'
 import adminSettingsScheduleRoutes from './details/admin-settings-schedules'
@@ -116,6 +117,8 @@ privateRouter.use('/api/admin/sponsors', afterHomeWrite, adminSponsorRoutes)
 privateRouter.use('/api/admin/reels', afterHomeWrite, adminReelRoutes)
 privateRouter.use('/api/admin/testimonials', afterHomeWrite, adminTestimonialRoutes)
 privateRouter.use('/api/admin/reviews', revalidateLandingAfterWrite(['home', 'booking-reviews']), adminReviewRoutes)
+// SEO halaman statis landing (PRD tambahan §7.7). Prefix literal tersendiri; landing menandai fetch /seo dengan tag 'seo'.
+privateRouter.use('/api/admin/seo-pages', revalidateLandingAfterWrite(['seo']), adminSeoPageRoutes)
 
 // Settings + profil staf — Fase 8G. Ketiga sub-prefix '/settings/*' WAJIB di atas '/api/admin/settings'
 // (pasangan 4 di bawah). '/profile' dan '/email' prefix literal lepas, tanpa kendala urutan.

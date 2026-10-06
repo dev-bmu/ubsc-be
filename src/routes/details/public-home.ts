@@ -10,12 +10,14 @@ import { publicLimiter } from '../../middleware/rate-limit-middleware'
 //   GET /api/public/promos
 //   GET /api/public/sponsors
 //   GET /api/public/news
+//   GET /api/public/news/:slug       NewsDetailDto, hanya artikel terbit (PRD §7.7)
 //   GET /api/public/reels
 //   GET /api/public/facilities
 //   GET /api/public/testimonials
 //   GET /api/public/reviews
 //   GET /api/public/announcements
 //   GET /api/public/gym-traffic
+//   GET /api/public/seo              PageSeoDto[] — timpaan SEO halaman statis dari admin (PRD §7.7)
 //
 // PENAMAAN. Path jamak mengikuti nama field HomeDto (shared/contracts.ts) dengan camelCase diturunkan
 // ke kebab-case, sama seperti /booking/slots dan /booking/month yang sudah ada: satu kata per konsep,
@@ -44,11 +46,13 @@ publicHomeRoutes.get('/membership-plans', publicLimiter, ctrl.membershipPlans)
 publicHomeRoutes.get('/promos', publicLimiter, ctrl.promos)
 publicHomeRoutes.get('/sponsors', publicLimiter, ctrl.sponsors)
 publicHomeRoutes.get('/news', publicLimiter, ctrl.news)
+publicHomeRoutes.get('/news/:slug', publicLimiter, ctrl.newsDetail)
 publicHomeRoutes.get('/reels', publicLimiter, ctrl.reels)
 publicHomeRoutes.get('/facilities', publicLimiter, ctrl.facilities)
 publicHomeRoutes.get('/testimonials', publicLimiter, ctrl.testimonials)
 publicHomeRoutes.get('/reviews', publicLimiter, ctrl.reviews)
 publicHomeRoutes.get('/announcements', publicLimiter, ctrl.announcements)
 publicHomeRoutes.get('/gym-traffic', publicLimiter, ctrl.gymTraffic)
+publicHomeRoutes.get('/seo', publicLimiter, ctrl.seo)
 
 export default publicHomeRoutes

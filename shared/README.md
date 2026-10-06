@@ -10,6 +10,7 @@ kebenaran di sini, dan salinan otomatis di kedua repo Next.
 | `contracts.ts`   | Envelope respons, `ErrorCode`, dan seluruh DTO. Murni tipe, tanpa nilai runtime.            |
 | `permissions.ts` | 16 permission, matriks 5 role staff, helper role. Reproduksi `RoleAndPermissionSeeder.php`. |
 | `format.ts`      | Rupiah, tanggal, dan jam Indonesia. Satu implementasi, `Asia/Jakarta` eksplisit.            |
+| `seo.ts`         | Daftar halaman statis landing yang SEO-nya diatur admin + default judul/deskripsi + batas.  |
 
 ## Aturan
 

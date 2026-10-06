@@ -1,5 +1,7 @@
+import { timingSafeEqual } from 'crypto'
+import type { Request } from 'express'
 import rateLimit, { Options } from 'express-rate-limit'
-import { IS_TEST } from '../config'
+import { IS_TEST, LANDING_REVALIDATE_SECRET } from '../config'
 import { ERROR_CODES } from '../utils/respond'
 import { logger } from '../utils/logger'
 
@@ -35,6 +37,8 @@ interface LimiterInput {
   message: string
   /** Hanya hitung permintaan yang GAGAL — dipakai jalur login. */
   skipSuccessfulRequests?: boolean
+  /** Lewati limiter untuk request tertentu (di luar mode test). */
+  skip?: (req: Request) => boolean
 }
 
 function createLimiter(name: string, input: LimiterInput) {
@@ -45,7 +49,7 @@ function createLimiter(name: string, input: LimiterInput) {
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     // Test tidak boleh gagal hanya karena berjalan cepat.
-    skip: () => IS_TEST,
+    skip: (req) => IS_TEST || (input.skip?.(req) ?? false),
     handler: (req, res) => {
       logger.warn(`RATE_LIMIT ${name} ip=${req.ip ?? '-'} path=${req.originalUrl}`)
       res.status(429).json({
@@ -128,11 +132,26 @@ export const slotsLimiter = createLimiter('slots', {
   message: 'Terlalu banyak permintaan. Mohon tunggu sebentar.'
 })
 
-/** Selimut untuk sisa endpoint publik. */
+/**
+ * Fetch RSC/ISR landing membawa `x-landing-secret` (= LANDING_REVALIDATE_SECRET). Tanpanya SEMUA fetch
+ * server landing berbagi satu ember 127.0.0.1, dan slug acak /berita/<x> (404 tidak di-cache Next) cukup
+ * untuk mengurasnya. Sengaja BUKAN skip berdasar IP loopback: port landing terbuka di 0.0.0.0 dan
+ * rewrites Next meneruskan header klien apa adanya, jadi IP / X-Forwarded-For bisa dipalsukan.
+ */
+const isLandingServer = (req: Request): boolean => {
+  const given = req.header('x-landing-secret')
+  if (!given || !LANDING_REVALIDATE_SECRET) return false
+  const a = Buffer.from(given)
+  const b = Buffer.from(LANDING_REVALIDATE_SECRET)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+/** Selimut untuk sisa endpoint publik. Fetch server landing (isLandingServer) tidak dihitung. */
 export const publicLimiter = createLimiter('public', {
   max: 60,
   windowSeconds: 60,
-  message: 'Terlalu banyak permintaan. Mohon tunggu sebentar.'
+  message: 'Terlalu banyak permintaan. Mohon tunggu sebentar.',
+  skip: isLandingServer
 })
 
 /**

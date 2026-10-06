@@ -15,12 +15,14 @@ import { ResponseError } from '../error/response-error'
 interface SingleUploadOptions {
   /** Pesan saat melewati batas ukuran — menempel ke field yang sama. */
   tooLargeMessage: string
+  /** Batas byte satu field TEKS (default multer 1 MB) — dinaikkan untuk isi artikel HTML yang panjang. */
+  fieldSize?: number
 }
 
 export function singleFileUpload(field: string, kind: UploadKind, options: SingleUploadOptions): RequestHandler {
   const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: UPLOAD_LIMITS[kind].maxBytes, files: 1, fields: 20, parts: 30 }
+    limits: { fileSize: UPLOAD_LIMITS[kind].maxBytes, files: 1, fields: 20, parts: 30, fieldSize: options.fieldSize }
   }).single(field)
 
   return (req, res, next) => {
@@ -45,7 +47,7 @@ export function fieldsFileUpload(fields: { name: string; maxCount: number }[], k
   const totalFiles = fields.reduce((sum, field) => sum + field.maxCount, 0)
   const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: UPLOAD_LIMITS[kind].maxBytes, files: totalFiles, fields: 40, parts: 60 }
+    limits: { fileSize: UPLOAD_LIMITS[kind].maxBytes, files: totalFiles, fields: 40, parts: 60, fieldSize: options.fieldSize }
   }).fields(fields)
 
   return (req, res, next) => {

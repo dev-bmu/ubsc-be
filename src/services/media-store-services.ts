@@ -43,7 +43,7 @@ const { maxWidth, maxHeight } = UPLOAD_LIMITS.CMS_IMAGE
 const MAX_PIXELS = maxWidth * maxHeight
 
 /** Validasi ISI berkas (bukan ekstensi/Content-Type klien), setara `image|mimes:jpeg,png,webp`. */
-async function inspect(buffer: Buffer, field: string): Promise<void> {
+export async function assertImageAcceptable(buffer: Buffer, field: string): Promise<void> {
   const meta = await sharp(buffer, { limitInputPixels: MAX_PIXELS })
     .metadata()
     .catch(() => null)
@@ -88,7 +88,7 @@ export interface StoreMediaInput {
  */
 export async function storePublicMedia(input: StoreMediaInput): Promise<MediaRow> {
   const field = input.field ?? input.collectionName
-  await inspect(input.buffer, field)
+  await assertImageAcceptable(input.buffer, field)
 
   const webp = await encode(input.buffer, 'webp')
   let chosen: { data: Buffer; ext: 'webp' | 'png' } = { data: webp, ext: 'webp' }
@@ -274,6 +274,31 @@ export async function storePublicVideo(input: StoreVideoInput): Promise<MediaRow
     // boleh tertinggal di storage/private/tmp.
     discardTempFile(input.tempPath)
   }
+}
+
+/**
+ * Ganti isi koleksi singleFile (thumbnail / og_image) dengan satu gambar baru.
+ *
+ * SIMPAN DULU, BARU BUANG YANG LAMA: storePublicMedia() yang men-decode berkas lewat sharp, jadi berkas
+ * rusak baru ketahuan di sana — kalau koleksi lama dihapus lebih dulu, satu unggahan rusak menghilangkan
+ * gambar lama. Tanpa berkas: `remove` mengosongkan koleksinya, selain itu tidak ada yang disentuh.
+ * Berkas fisik lama dibuang paling akhir (unlink tidak bisa di-rollback).
+ */
+export async function replaceSingleMedia(
+  owner: { modelType: MediaModelType; modelId: string; collectionName: MediaCollection; field: string },
+  file: { buffer: Buffer; originalname: string } | undefined,
+  remove = false
+): Promise<void> {
+  if (!file && !remove) return
+
+  const { modelType, modelId, collectionName } = owner
+  const previous = await prismaClient.media.findMany({ where: { modelType, modelId, collectionName }, select: MEDIA_SELECT })
+
+  if (file) await storePublicMedia({ ...owner, buffer: file.buffer, originalName: file.originalname })
+  if (previous.length === 0) return
+
+  await prismaClient.media.deleteMany({ where: { id: { in: previous.map((row) => row.id) } } })
+  unlinkMediaFiles(previous)
 }
 
 /** Hapus semua baris media satu owner PADA SATU koleksi (mis. 'hero'). Mengembalikan baris terhapus. */

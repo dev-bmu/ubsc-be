@@ -1,7 +1,8 @@
 import { Request, RequestHandler } from 'express'
 import { isBypassed } from '../middleware/permission-middleware'
 import * as service from '../services/news-admin-services'
-import { StaffGate, UploadedThumbnail } from '../services/news-admin-services'
+import { NewsUploadFiles, StaffGate, UploadedThumbnail } from '../services/news-admin-services'
+import * as pageSeo from '../services/page-seo-services'
 import { UserRequest } from '../type/user-request'
 import { requireUser } from '../utils/request-user'
 import { ok } from '../utils/respond'
@@ -27,8 +28,11 @@ const publishGate = (req: Request): StaffGate => ({
   bypass: isBypassed(req)
 })
 
-/** req.file dari newsThumbnailUpload (.single('thumbnail')) — dicast ke bentuk minimum yang dipakai service. */
-const thumbnail = (file: unknown): UploadedThumbnail | undefined => file as UploadedThumbnail | undefined
+/** req.file (.single) — dicast ke bentuk minimum yang dipakai service. */
+const singleImage = (file: unknown): UploadedThumbnail | undefined => file as UploadedThumbnail | undefined
+
+/** req.files dari newsMediaUpload (.fields thumbnail + ogImage). */
+const newsFiles = (files: unknown): NewsUploadFiles => (files ?? {}) as NewsUploadFiles
 
 // ===== Berita =====
 
@@ -59,7 +63,7 @@ export const editForm: RequestHandler = async (req, res, next) => {
 /** `author_id => Auth::id()`. requireUser menolak jalur x-service-key yang tidak membawa user (401). */
 export const store: RequestHandler = async (req, res, next) => {
   try {
-    ok(res, await service.storeNews(req.body, thumbnail(req.file), requireUser(req).id, publishGate(req)), undefined, 201)
+    ok(res, await service.storeNews(req.body, newsFiles(req.files), requireUser(req).id, publishGate(req)), undefined, 201)
   } catch (error) {
     next(error)
   }
@@ -67,7 +71,7 @@ export const store: RequestHandler = async (req, res, next) => {
 
 export const update: RequestHandler = async (req, res, next) => {
   try {
-    ok(res, await service.updateNews(String(req.params.id), req.body, thumbnail(req.file), publishGate(req)))
+    ok(res, await service.updateNews(String(req.params.id), req.body, newsFiles(req.files), publishGate(req)))
   } catch (error) {
     next(error)
   }
@@ -76,6 +80,15 @@ export const update: RequestHandler = async (req, res, next) => {
 export const destroy: RequestHandler = async (req, res, next) => {
   try {
     ok(res, await service.destroyNews(String(req.params.id)))
+  } catch (error) {
+    next(error)
+  }
+}
+
+/** Gambar yang disisipkan editor ke isi artikel — field `image`. */
+export const contentImageStore: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await service.storeContentImage(singleImage(req.file)), undefined, 201)
   } catch (error) {
     next(error)
   }
@@ -149,6 +162,24 @@ export const bannerDestroy: RequestHandler = async (req, res, next) => {
 export const gymTrafficUpdate: RequestHandler = async (req, res, next) => {
   try {
     ok(res, await service.updateGymTraffic(req.body))
+  } catch (error) {
+    next(error)
+  }
+}
+
+// ===== SEO halaman statis landing (PRD §7.7) =====
+
+export const seoPageIndex: RequestHandler = async (_req, res, next) => {
+  try {
+    ok(res, await pageSeo.listAdminPageSeo())
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const seoPageUpdate: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await pageSeo.updatePageSeo(String(req.params.key), req.body, singleImage(req.file)))
   } catch (error) {
     next(error)
   }

@@ -1,8 +1,17 @@
 import { CookieOptions, Response } from 'express'
 import { randomUUID } from 'crypto'
+import { isIP } from 'net'
 import bcrypt from 'bcryptjs'
+import { RefreshToken } from '@prisma/client'
 import { prismaClient } from '../application/database'
-import { COOKIE_DOMAIN, IS_PRODUCTION, MAX_FAILED_LOGINS, MAX_SESSIONS, REFRESH_TOKEN_EXPIRES_SECONDS as REFRESH_EXPIRES } from '../config'
+import {
+  COOKIE_DOMAIN,
+  IS_PRODUCTION,
+  LANDING_URL,
+  MAX_FAILED_LOGINS,
+  MAX_SESSIONS,
+  REFRESH_TOKEN_EXPIRES_SECONDS as REFRESH_EXPIRES
+} from '../config'
 import { ResponseError } from '../error/response-error'
 import { UserWithRelations } from '../type/user-request'
 import { TokenAudience, signAccessToken } from '../utils/jwt'
@@ -93,19 +102,52 @@ function mirrorCookieOptions() {
   return withDomain({ httpOnly: false, secure: IS_PRODUCTION, sameSite: 'lax', maxAge, path: MIRROR_COOKIE_PATH })
 }
 
-function clearAuthCookies(res: Response, audience: TokenAudience) {
-  const names = COOKIES[audience]
-  const targets = [
-    { name: names.refresh, path: REFRESH_COOKIE_PATH },
-    { name: names.role, path: MIRROR_COOKIE_PATH },
-    { name: names.permissions, path: MIRROR_COOKIE_PATH }
-  ]
+/**
+ * Domain induk tempat cookie auth LAMA bisa tertinggal: produksi pernah berjalan dengan
+ * COOKIE_DOMAIN=.ubsportcenter.co.id. Cookie ber-Domain itu terkirim ke kedua host, bernama dan
+ * ber-Path sama dengan cookie host-only yang baru, dan dikirim LEBIH DULU (RFC 6265: path sama,
+ * yang tertua duluan) — cookie host-only tidak pernah bisa menghapusnya. Diturunkan dari host
+ * LANDING_URL (apex): dash.<apex> ikut domain-match, jadi clear-nya diterima dari kedua host.
+ * Kosong untuk localhost/IP (dev).
+ */
+const SHADOW_COOKIE_DOMAIN = (() => {
+  const host = new URL(LANDING_URL).hostname
+  return host.includes('.') && !isIP(host.replace(/[[\]]/g, '')) ? host : ''
+})()
 
-  targets.forEach((target) => {
+const bareDomain = (domain: string) => domain.replace(/^\./, '').toLowerCase()
+
+/** Scope cookie yang SEDANG dipakai untuk menulis: Domain=COOKIE_DOMAIN, atau host-only (undefined). */
+const liveScope = (): string | undefined => COOKIE_DOMAIN || undefined
+
+/** Scope selain liveScope tempat sisa cookie lama mungkin bertahan. */
+function staleScopes(): (string | undefined)[] {
+  const scopes: (string | undefined)[] = COOKIE_DOMAIN ? [undefined] : []
+  if (SHADOW_COOKIE_DOMAIN && bareDomain(SHADOW_COOKIE_DOMAIN) !== bareDomain(COOKIE_DOMAIN)) scopes.push(SHADOW_COOKIE_DOMAIN)
+  return scopes
+}
+
+function expireCookies(res: Response, audience: TokenAudience, domains: (string | undefined)[]) {
+  const names = COOKIES[audience]
+  for (const domain of domains) {
     // Path wajib sama persis dengan saat di-set, kalau tidak cookie-nya tidak terhapus.
-    res.clearCookie(target.name, { path: target.path })
-    if (COOKIE_DOMAIN) res.clearCookie(target.name, { path: target.path, domain: COOKIE_DOMAIN })
-  })
+    const scope = domain ? { domain } : {}
+    res.clearCookie(names.refresh, { path: REFRESH_COOKIE_PATH, ...scope })
+    res.clearCookie(names.role, { path: MIRROR_COOKIE_PATH, ...scope })
+    res.clearCookie(names.permissions, { path: MIRROR_COOKIE_PATH, ...scope })
+  }
+}
+
+function clearAuthCookies(res: Response, audience: TokenAudience) {
+  expireCookies(res, audience, [liveScope(), ...staleScopes()])
+}
+
+/**
+ * Dipanggil SEBELUM cookie segar dipasang (login & rotasi). Set-Cookie diterapkan browser
+ * berurutan (res.clearCookie/res.cookie meng-append), dan liveScope tidak disentuh.
+ */
+function clearShadowCookies(res: Response, audience: TokenAudience) {
+  expireCookies(res, audience, staleScopes())
 }
 
 /** Cookie non-httpOnly dipakai middleware Next untuk gate route sebelum render. */
@@ -129,24 +171,44 @@ function publicUser(user: UserWithRelations, permissions: string[]) {
 // ===== Helper sesi =====
 
 /**
+ * Jendela toleransi rotasi. Dua tab (atau dua request) yang memulihkan sesi hampir bersamaan
+ * mengirim token yang SAMA; yang kalah tiba sepersekian detik setelah token itu dirotasi. Begitu
+ * juga balasan rotasi yang hilang (navigasi membatalkan fetch refresh; server sudah merotasi).
+ * Itu balapan biasa, bukan pencurian — tanpa toleransi ini, membuka dua tab sekaligus mencabut
+ * semua sesi pelanggan.
+ */
+const ROTATION_GRACE_MS = 30_000
+
+/**
+ * Token revoked yang dicabut di luar jendela toleransi. Saat rotasi, lastUsedAt token lama diisi
+ * waktu pencabutannya; token yang baru dicabut WAJIB tetap ada selama jendela itu, kalau tidak
+ * request paralel yang masih membawanya mendapat "tidak ditemukan" dan cookie-nya dihapus.
+ */
+const staleRevoked = () => ({ revoked: true, lastUsedAt: { lt: new Date(Date.now() - ROTATION_GRACE_MS) } })
+
+/**
  * Buang token expired/revoked, lalu paksa batas MAX_SESSIONS.
  * Batasnya PER AUDIENCE: login di panel staff tidak boleh menendang sesi
  * customer milik orang yang sama di situs publik.
  */
 async function pruneAndEnforce(userId: string, audience: TokenAudience) {
   await prismaClient.refreshToken.deleteMany({
-    where: { userId, audience, OR: [{ expiresAt: { lt: new Date() } }, { revoked: true }] }
+    where: { userId, audience, OR: [{ expiresAt: { lt: new Date() } }, staleRevoked()] }
   })
 
   const active = await prismaClient.refreshToken.findMany({
     where: { userId, audience, revoked: false, expiresAt: { gt: new Date() } },
     orderBy: { createdAt: 'desc' },
-    select: { id: true }
+    select: { id: true, familyId: true }
   })
 
-  if (active.length >= MAX_SESSIONS) {
-    const toRemove = active.slice(MAX_SESSIONS - 1).map((session) => session.id)
-    await prismaClient.refreshToken.deleteMany({ where: { id: { in: toRemove } } })
+  // Dihitung per family (= satu sesi device), bukan per baris: refresh paralel dan token saudara dari
+  // jalur toleransi menambah baris hidup di family yang sama, dan tidak boleh menendang device lain.
+  // Kunci family lama yang null = id barisnya sendiri.
+  const sessions = [...new Set(active.map((row) => row.familyId ?? row.id))]
+  if (sessions.length >= MAX_SESSIONS) {
+    const evicted = sessions.slice(MAX_SESSIONS - 1)
+    await prismaClient.refreshToken.deleteMany({ where: { userId, audience, OR: [{ familyId: { in: evicted } }, { id: { in: evicted } }] } })
   }
 }
 
@@ -234,6 +296,7 @@ async function issueSession(
     }
   })
 
+  clearShadowCookies(res, audience)
   res.cookie(COOKIES[audience].refresh, refreshPlain, refreshCookieOptions())
   setSessionCookies(res, user, permissions, audience)
   logger.info(`${reason} sukses (${audience}): ${user.email}`)
@@ -245,18 +308,58 @@ async function issueSession(
 // 2. REFRESH (rotasi + reuse detection)
 // ---------------------------------------------------------------------------
 
+const isLive = (row: RefreshToken, audience: TokenAudience, now: Date) => !row.revoked && row.expiresAt > now && row.audience === audience
+
 /**
- * Jendela toleransi rotasi. Dua tab (atau dua request) yang memulihkan sesi hampir bersamaan
- * mengirim token yang SAMA; yang kalah tiba sepersekian detik setelah token itu dirotasi. Itu
- * balapan biasa, bukan pencurian — tanpa toleransi ini, membuka dua tab sekaligus mencabut semua
- * sesi pelanggan.
+ * Baris hidup di family (sesi device) token yang dicabut DI DALAM jendela toleransi, atau null.
+ * Jendela dihitung dari pengganti PERTAMA (= saat token ini dicabut), bukan dari ujung rantai:
+ * kalau dari ujung, token curian lama lolos selamanya selama pemilik aslinya rajin merotasi.
+ * Maksimal dua query per nilai cookie — tanpa jalan hop per hop yang panjangnya bisa diatur klien.
  */
-const ROTATION_GRACE_MS = 30_000
+async function liveTipWithinGrace(row: RefreshToken, audience: TokenAudience, now: Date): Promise<RefreshToken | null> {
+  if (!row.revoked || !row.replacedBy) return null
+  const first = await prismaClient.refreshToken.findUnique({ where: { id: row.replacedBy } })
+  if (!first || now.getTime() - first.createdAt.getTime() > ROTATION_GRACE_MS) return null
+  if (isLive(first, audience, now)) return first
+  if (!first.familyId) return null
+  return prismaClient.refreshToken.findFirst({
+    where: { userId: first.userId, familyId: first.familyId, audience, revoked: false, expiresAt: { gt: now } },
+    orderBy: { createdAt: 'desc' }
+  })
+}
 
-export const refreshAuth = async (rt: string | undefined, audience: TokenAudience, ipAddress: string | null, res: Response) => {
-  if (!rt) throw new ResponseError(401, 'Sesi tidak ditemukan. Silakan masuk kembali.', 'UNAUTHENTICATED')
+/**
+ * `tokens` = SEMUA nilai cookie refresh audience ini di header Cookie. Browser bisa membawa lebih dari
+ * satu (sisa cookie ber-Domain lama + cookie host-only baru, path sama, yang tertua dikirim duluan).
+ */
+export const refreshAuth = async (tokens: string[], audience: TokenAudience, ipAddress: string | null, res: Response) => {
+  if (tokens.length === 0) {
+    // Cookie penanda (role) tanpa cookie refresh membuat middleware Next mengira masih ada sesi.
+    clearAuthCookies(res, audience)
+    throw new ResponseError(401, 'Sesi tidak ditemukan. Silakan masuk kembali.', 'UNAUTHENTICATED')
+  }
 
-  const stored = await prismaClient.refreshToken.findUnique({ where: { tokenHash: hashToken(rt) } })
+  const now = new Date()
+  const hashes = tokens.map(hashToken)
+  const found = await prismaClient.refreshToken.findMany({ where: { tokenHash: { in: hashes } } })
+  const rows = hashes.flatMap((hash) => found.filter((row) => row.tokenHash === hash))
+
+  // Pilih nilai yang bisa melanjutkan sesi: yang hidup, lalu yang baru dirotasi dan penggantinya
+  // hidup. Nilai lain (sisa cookie lama) tidak boleh memicu reuse detection atau menghapus cookie
+  // yang hidup. Bila tidak ada, semantik satu token berlaku untuk nilai pertama yang dikenal DB —
+  // reuse dengan satu cookie tetap terdeteksi.
+  let stored = rows.find((row) => isLive(row, audience, now))
+  let tip = stored ?? null
+  if (!stored) {
+    for (const row of rows) {
+      tip = await liveTipWithinGrace(row, audience, now)
+      if (tip) {
+        stored = row
+        break
+      }
+    }
+    stored ??= rows[0]
+  }
 
   if (!stored) {
     clearAuthCookies(res, audience)
@@ -273,26 +376,16 @@ export const refreshAuth = async (rt: string | undefined, audience: TokenAudienc
     throw new ResponseError(401, 'Sesi tidak valid. Silakan masuk kembali.', 'UNAUTHENTICATED')
   }
 
-  if (stored.expiresAt < new Date()) {
+  if (stored.expiresAt <= now) {
     await prismaClient.refreshToken.delete({ where: { id: stored.id } })
     clearAuthCookies(res, audience)
     throw new ResponseError(401, 'Sesi kedaluwarsa. Silakan masuk kembali.', 'UNAUTHENTICATED')
   }
 
-  // Token yang baru saja dirotasi (penggantinya masih sah, < ROTATION_GRACE_MS) = balapan antar tab:
-  // dijawab access token di bawah, TANPA rotasi lagi dan tanpa menyentuh cookie — browser sudah
-  // menyimpan token pengganti dari balasan yang menang.
-  const replacement = stored.revoked && stored.replacedBy ? await prismaClient.refreshToken.findUnique({ where: { id: stored.replacedBy } }) : null
-  const benignRace =
-    replacement !== null &&
-    !replacement.revoked &&
-    replacement.expiresAt > new Date() &&
-    Date.now() - replacement.createdAt.getTime() <= ROTATION_GRACE_MS
-
-  // Token sudah dirotasi tapi dipakai lagi = kemungkinan dicuri. Hapus SEMUA
-  // sesi user di kedua audience: kalau satu device dikompromikan, memaksa login
+  // Token sudah dirotasi, di luar jendela toleransi (atau rantainya buntu), dipakai lagi = kemungkinan
+  // dicuri. Hapus SEMUA sesi user di kedua audience: kalau satu device dikompromikan, memaksa login
   // ulang hanya di satu sisi bukan jawaban.
-  if (stored.revoked && !benignRace) {
+  if (stored.revoked && !tip) {
     logger.warn(`TOKEN_REUSE_DETECTED userId=${stored.userId} audience=${audience} ip=${ipAddress ?? '-'}`)
     await prismaClient.refreshToken.deleteMany({ where: { userId: stored.userId } })
     clearAuthCookies(res, audience)
@@ -318,39 +411,44 @@ export const refreshAuth = async (rt: string | undefined, audience: TokenAudienc
     throw new ResponseError(403, 'Akun ini tidak punya akses ke panel staff', 'FORBIDDEN')
   }
 
-  if (benignRace) {
-    const permissions = user.role ? await getPermissionsByRole(user.role.name) : []
-    return { accessToken: signAccessToken({ userId: user.id, role: user.role?.name ?? null }, audience), user: publicUser(user, permissions) }
+  // Jalur hidup: rotasi token yang dikirim. Jalur toleransi (yang dikirim baru saja dirotasi: tab lain
+  // menang, atau balasan rotasinya hilang karena navigasi membatalkan fetch): cetak token SAUDARA di
+  // family `tip` TANPA mencabut baris mana pun. Setiap token yang mungkin dipegang browser — dari
+  // balasan yang sampai maupun yang hilang — tetap hidup; balasan ini tetap membawa cookie token hidup.
+  // Baris hidup ekstra di satu family dihitung sebagai satu sesi (pruneAndEnforce) dan ikut terhapus
+  // saat logout family itu.
+  const source = tip ?? stored
+  const newPlain = createRefreshToken()
+  const data = {
+    userId: source.userId,
+    audience,
+    tokenHash: hashToken(newPlain),
+    expiresAt: new Date(Date.now() + REFRESH_EXPIRES * 1000),
+    familyId: source.familyId || randomUUID(),
+    ipAddress: ipAddress || source.ipAddress,
+    userAgent: source.userAgent,
+    lastUsedAt: new Date()
+  }
+  if (stored.revoked) {
+    await prismaClient.refreshToken.create({ data })
+  } else {
+    await prismaClient.$transaction(async (tx) => {
+      const created = await tx.refreshToken.create({ data })
+      // Token lama ditandai revoked (bukan dihapus) supaya reuse terdeteksi; lastUsedAt = saat dicabut (staleRevoked).
+      await tx.refreshToken.update({ where: { id: stored.id }, data: { revoked: true, replacedBy: created.id, lastUsedAt: new Date() } })
+    })
   }
 
-  // Rotasi: token lama ditandai revoked (bukan dihapus) supaya reuse terdeteksi.
-  const newPlain = createRefreshToken()
-  await prismaClient.$transaction(async (tx) => {
-    const created = await tx.refreshToken.create({
-      data: {
-        userId: stored.userId,
-        audience,
-        tokenHash: hashToken(newPlain),
-        expiresAt: new Date(Date.now() + REFRESH_EXPIRES * 1000),
-        familyId: stored.familyId || randomUUID(),
-        ipAddress: ipAddress || stored.ipAddress,
-        userAgent: stored.userAgent,
-        lastUsedAt: new Date()
-      }
-    })
-    await tx.refreshToken.update({ where: { id: stored.id }, data: { revoked: true, replacedBy: created.id } })
-  })
-
-  // Sisakan hanya token revoked terakhir (stored.id) sebagai umpan reuse detection.
+  // Sisakan token revoked yang dikirim (stored.id) sebagai umpan reuse detection, plus yang masih di
+  // jendela toleransi — request paralel mungkin masih membawanya.
   await prismaClient.refreshToken.deleteMany({
-    where: { userId: stored.userId, audience, OR: [{ revoked: true, id: { not: stored.id } }, { expiresAt: { lt: new Date() } }] }
+    where: { userId: stored.userId, audience, id: { not: stored.id }, OR: [staleRevoked(), { expiresAt: { lt: new Date() } }] }
   })
 
   const permissions = user.role ? await getPermissionsByRole(user.role.name) : []
   const accessToken = signAccessToken({ userId: user.id, role: user.role?.name ?? null }, audience)
 
-  res.clearCookie(COOKIES[audience].refresh, { path: REFRESH_COOKIE_PATH })
-  if (COOKIE_DOMAIN) res.clearCookie(COOKIES[audience].refresh, { path: REFRESH_COOKIE_PATH, domain: COOKIE_DOMAIN })
+  clearShadowCookies(res, audience)
   res.cookie(COOKIES[audience].refresh, newPlain, refreshCookieOptions())
   setSessionCookies(res, user, permissions, audience)
 
@@ -361,13 +459,12 @@ export const refreshAuth = async (rt: string | undefined, audience: TokenAudienc
 // 3. LOGOUT (hapus family sesi device ini; device lain tetap login)
 // ---------------------------------------------------------------------------
 
-export const logoutAuth = async (rt: string | undefined, audience: TokenAudience, res: Response) => {
-  if (rt) {
-    const stored = await prismaClient.refreshToken.findUnique({ where: { tokenHash: hashToken(rt) } })
-    if (stored && stored.audience === audience) {
-      if (stored.familyId) await prismaClient.refreshToken.deleteMany({ where: { familyId: stored.familyId } })
-      else await prismaClient.refreshToken.delete({ where: { id: stored.id } })
-    }
+export const logoutAuth = async (tokens: string[], audience: TokenAudience, res: Response) => {
+  // Semua nilai yang dikirim browser ini (termasuk sisa cookie ber-Domain lama) ikut di-logout.
+  const rows = tokens.length ? await prismaClient.refreshToken.findMany({ where: { tokenHash: { in: tokens.map(hashToken) }, audience } }) : []
+  if (rows.length) {
+    const families = rows.flatMap((row) => (row.familyId ? [row.familyId] : []))
+    await prismaClient.refreshToken.deleteMany({ where: { OR: [{ familyId: { in: families } }, { id: { in: rows.map((row) => row.id) } }] } })
   }
 
   // Cookie tetap dibersihkan walau token tidak ditemukan: logout tidak pernah gagal.

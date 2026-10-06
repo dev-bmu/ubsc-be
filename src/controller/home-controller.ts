@@ -3,6 +3,7 @@ import {
   HOME_REELS_LIMIT,
   HOME_REVIEWS_LIMIT,
   getGymTraffic,
+  getNewsDetail,
   listAnnouncements,
   listMembershipPlans,
   listNews,
@@ -13,6 +14,7 @@ import {
   listTestimonials
 } from '../services/cms-services'
 import { getHome } from '../services/home-services'
+import { listPageSeo } from '../services/page-seo-services'
 import { listPublicFacilities } from '../services/public-facility-services'
 import { ok } from '../utils/respond'
 
@@ -112,6 +114,21 @@ export const news: RequestHandler = async (_req, res, next) => {
   }
 }
 
+/**
+ * Halaman /berita/<slug> dan /artikel/<slug> (PRD §7.7). Header cache dipasang SETELAH service berhasil:
+ * 404 untuk slug yang belum terbit tidak boleh tersimpan 5 menit di cache bersama — artikel yang baru
+ * diterbitkan akan tetap 404 sampai cache itu kedaluwarsa.
+ */
+export const newsDetail: RequestHandler = async (req, res, next) => {
+  try {
+    const detail = await getNewsDetail(String(req.params.slug))
+    sharedCache(res)
+    ok(res, detail)
+  } catch (error) {
+    next(error)
+  }
+}
+
 export const reels: RequestHandler = async (_req, res, next) => {
   try {
     sharedCache(res)
@@ -167,6 +184,16 @@ export const gymTraffic: RequestHandler = async (_req, res, next) => {
   try {
     sharedCache(res)
     ok(res, await getGymTraffic())
+  } catch (error) {
+    next(error)
+  }
+}
+
+/** Timpaan SEO halaman statis (hanya yang pernah disimpan admin); landing menggabungkannya dengan SEO_PAGES. */
+export const seo: RequestHandler = async (_req, res, next) => {
+  try {
+    sharedCache(res)
+    ok(res, await listPageSeo())
   } catch (error) {
     next(error)
   }

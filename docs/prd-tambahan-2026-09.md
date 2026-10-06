@@ -916,3 +916,35 @@ semua kartu.
   - foto E-card dimuat dengan mode CORS;
   - tombol "Unduh QRIS" mengambil gambar sebagai blob.
   - Ketiganya butuh header `Access-Control-Allow-Origin` di CDN (Transform Rule Cloudflare).
+
+### 7.7 Catatan client 2026-10-06 — halaman artikel, editor WYSIWYG, SEO
+
+- **URL artikel publik**: `/berita/<slug>` untuk kategori Berita dan semua kategori lain (juga tanpa
+  kategori), `/artikel/<slug>` khusus kategori ber-slug `artikel`. `/news` tetap halaman daftar.
+  `NewsDto.section` (`'berita' | 'artikel'`) memberi tahu landing URL mana yang dipakai.
+- **Isi artikel** ditulis lewat editor WYSIWYG admin (HTML). API menyanitasinya dengan `sanitize-html`
+  (`src/utils/sanitize-html.ts`) saat simpan DAN saat dibaca publik. Daftar putih: p, br, h2–h4 (h1 → h2,
+  h5/h6 → h4), strong/b, em/i, u, s, a, ul/ol/li, blockquote, code, pre, hr, img, figure, figcaption;
+  style hanya `text-align`; skema http/https/mailto/tel (gambar: http/https saja, tanpa `data:`).
+  Isi yang kosong setelah sanitasi ditolak 422.
+- **Field SEO artikel** (`news`): `metaTitle` (≤ 120 karakter di validasi), `metaDescription` (≤ 320),
+  `noindex`, dan OG image (media koleksi `og_image`). Fallback diresolusi API di `NewsDetailDto.seo`:
+  judul → excerpt / ±160 karakter pertama isi → thumbnail.
+- **SEO halaman statis** (beranda, tentang, fasilitas, harga, booking, berita, tiga halaman legal):
+  daftar + default ada di `shared/seo.ts` (`SEO_PAGES`); timpaan admin di tabel `page_seo` (judul,
+  deskripsi, noindex) + OG image (media `PageSeo` / `og_image`). Kosong = default kode.
+- **Endpoint baru**:
+  - `GET /api/public/news/:slug` → `NewsDetailDto` (hanya `published`, selain itu 404).
+  - `GET /api/public/seo` → `PageSeoDto[]` (hanya halaman yang pernah disimpan).
+  - `POST /api/admin/news/content-images` (multipart `image`) → `{ url }` untuk gambar di dalam isi.
+    Gambar baru lahir "unattached" dan ditautkan ke artikel saat artikel disimpan; unggahan yang tidak
+    pernah disimpan belum disapu otomatis.
+  - `GET /api/admin/seo-pages`, `PUT /api/admin/seo-pages/:key` (multipart: `title`, `description`,
+    `noindex`, berkas `ogImage`, `removeOgImage`).
+  - `POST/PUT /api/admin/news` kini menerima berkas `ogImage` + field `metaTitle`, `metaDescription`,
+    `noindex`, `removeOgImage`; batas field teks multipart dinaikkan ke 2 MB untuk isi artikel.
+- **Migrasi** `20261006090000_seo_artikel_halaman`: tiga kolom di `news` + tabel `page_seo`.
+- **Revalidasi landing**: tulis `/api/admin/seo-pages` membuang tag `seo`; tulis berita tetap
+  `home` + `news` (halaman detail ikut tag `news`).
+- **Env**: landing dan admin sama-sama butuh `NEXT_PUBLIC_SITE_URL=https://ubsportcenter.co.id`
+  (URL kanonis, OG, sitemap; admin memakainya untuk pratinjau tautan/hasil pencarian).

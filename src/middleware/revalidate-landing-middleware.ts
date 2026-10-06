@@ -9,7 +9,7 @@ import { logger } from '../utils/logger'
 // yang mati tidak boleh menggagalkan tulis admin; halamannya tetap segar sendiri saat ISR habis.
 
 /** Tag fetch di ubsc-landing/src/services/server.ts. */
-export type LandingTag = 'home' | 'facilities' | 'booking-facilities' | 'membership-plans' | 'news' | 'booking-reviews'
+export type LandingTag = 'home' | 'facilities' | 'booking-facilities' | 'membership-plans' | 'news' | 'booking-reviews' | 'seo'
 
 export function revalidateLanding(tags: LandingTag[]): void {
   if (!LANDING_REVALIDATE_URL || !LANDING_REVALIDATE_SECRET) return

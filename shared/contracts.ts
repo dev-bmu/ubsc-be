@@ -7,6 +7,7 @@
 // Baca shared/README.md sebelum menambah apa pun di sini: satu field baru = tiga commit.
 
 import type { PermissionCode } from './permissions'
+import type { SeoPageKey } from './seo'
 
 // ===== Envelope =====
 //
@@ -314,6 +315,65 @@ export interface NewsDto {
   category: string
   image: string
   description: string | null
+  /** Bagian URL publik: /artikel/<slug> bila slug kategori 'artikel', selain itu (termasuk tanpa kategori) /berita/<slug>. */
+  section: NewsSection
+  /** ISO 8601 UTC — untuk <time dateTime>, JSON-LD, dan sitemap. `date` tetap teks tampilan. */
+  publishedAt: string | null
+  /** ISO 8601 UTC. */
+  updatedAt: string
+  noindex: boolean
+}
+
+export type NewsSection = 'berita' | 'artikel'
+
+/**
+ * SEO artikel yang SUDAH diresolusi server: title = metaTitle || judul; description = metaDescription ||
+ * (excerpt || teks isi), keduanya dipotong ~160 karakter di batas kata + '…'; ogImage = media 'og_image' ||
+ * thumbnail || '' (URL seperti publicUrl: relatif '/uploads/...' di lokal, absolut di R2).
+ */
+export interface NewsSeoDto {
+  title: string
+  description: string
+  ogImage: string
+  noindex: boolean
+}
+
+/** GET /api/public/news/:slug — hanya status 'published', selain itu 404. */
+export interface NewsDetailDto extends NewsDto {
+  /** HTML yang sudah disanitasi server (aman untuk dangerouslySetInnerHTML). */
+  content: string
+  authorName: string
+  readingMinutes: number
+  seo: NewsSeoDto
+  /** Maks 3 artikel terbit terbaru di section yang sama, tanpa artikel ini. */
+  related: NewsDto[]
+}
+
+/**
+ * GET /api/public/seo — HANYA halaman yang punya baris di DB. null = pakai default SEO_PAGES (shared/seo.ts).
+ * ogImage null = pakai OG image bawaan landing.
+ */
+export interface PageSeoDto {
+  key: SeoPageKey
+  title: string | null
+  description: string | null
+  ogImage: string | null
+  noindex: boolean
+}
+
+/** GET /api/admin/seo-pages — SELURUH SEO_PAGES (urutan yang sama), digabung dengan baris DB. */
+export interface AdminPageSeoDto extends PageSeoDto {
+  label: string
+  path: string
+  defaultTitle: string
+  defaultDescription: string
+  /** Waktu relatif Bahasa Indonesia (diffForHumans), null bila belum pernah disimpan. */
+  updatedAt: string | null
+}
+
+/** POST /api/admin/news/content-images — gambar yang disisipkan ke isi artikel lewat editor. */
+export interface NewsContentImageDto {
+  url: string
 }
 
 /**
@@ -1611,6 +1671,12 @@ export interface AdminNewsDto {
   category: NewsCategoryRefDto | null
   author: NewsAuthorDto
   thumbnail: string | null
+  section: NewsSection
+  metaTitle: string | null
+  metaDescription: string | null
+  /** URL media 'og_image' milik artikel; null = landing memakai thumbnail. */
+  ogImage: string | null
+  noindex: boolean
 }
 
 /** Kategori + jumlah artikel (withCount) untuk panel kategori di halaman News. */
@@ -1634,7 +1700,10 @@ export interface AdminNewsFormDto {
   categories: Pick<NewsCategoryRefDto, 'id' | 'name'>[]
 }
 
-/** POST/PUT /api/admin/news — multipart bila `thumbnail` ikut. */
+/**
+ * POST/PUT /api/admin/news — multipart: berkas `thumbnail` dan `ogImage` (keduanya opsional), plus
+ * `removeOgImage` ('1') untuk menghapus OG image lama. `content` = HTML editor; server menyanitasinya.
+ */
 export interface NewsPayload {
   newsCategoryId: string | null
   title: string
@@ -1644,6 +1713,11 @@ export interface NewsPayload {
   status: NewsStatus
   /** Dikirim apa adanya dari form; server yang memutuskan nilai akhir (lihat resolvePublishedAt). */
   publishedAt: string | null
+  /** '' / null = pakai judul. */
+  metaTitle: string | null
+  /** '' / null = pakai excerpt atau potongan isi. */
+  metaDescription: string | null
+  noindex: boolean
 }
 
 export interface NewsCategoryPayload {

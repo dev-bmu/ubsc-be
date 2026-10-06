@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SEO_LIMITS } from '../../shared/seo'
 import { isValidDateString } from '../utils/clock'
 
 // ===== Validasi CMS berita + kategori + info banner + gym traffic (panel staff) =====
@@ -85,6 +86,20 @@ const publishedAtField = z.preprocess(
  */
 export const GYM_TRAFFIC_VALUES = ['Low Occupancy', 'Medium Occupancy', 'High Occupancy', 'We Are Close'] as const
 
+/** Teks SEO opsional: trim, kosong -> null (= pakai default/fallback), absen -> undefined (= tidak diubah). */
+const seoText = (max: number, label: string) =>
+  z.preprocess(
+    blankToNull,
+    z
+      .string({ error: `${label} harus berupa teks.` })
+      .trim()
+      .max(max, { error: `${label} maksimal ${max} karakter.` })
+      .nullish()
+  )
+
+const META_TITLE = seoText(SEO_LIMITS.titleMax, 'Judul SEO')
+const META_DESCRIPTION = seoText(SEO_LIMITS.descriptionMax, 'Deskripsi SEO')
+
 export class NewsAdminValidation {
   /**
    * POST & PUT /api/admin/news — padanan NewsController::validateArticle().
@@ -105,12 +120,13 @@ export class NewsAdminValidation {
       .string({ error: 'Judul wajib diisi.' })
       .trim()
       .min(1, { error: 'Judul wajib diisi.' })
-      .max(255, { error: 'Judul maksimal 255 karakter.' }),
+      // 191, bukan 255 Laravel: kolomnya VARCHAR(191) di skema Prisma — 255 berujung 500 dari MySQL.
+      .max(191, { error: 'Judul maksimal 191 karakter.' }),
     slug: z
       .string({ error: 'Slug wajib diisi.' })
       .trim()
       .min(1, { error: 'Slug wajib diisi.' })
-      .max(255, { error: 'Slug maksimal 255 karakter.' })
+      .max(191, { error: 'Slug maksimal 191 karakter.' })
       .regex(/^[A-Za-z0-9_-]+$/, { error: 'Slug hanya boleh berisi huruf, angka, tanda hubung, dan garis bawah.' }),
     excerpt: z.preprocess(
       blankToNull,
@@ -118,9 +134,23 @@ export class NewsAdminValidation {
     ),
     // .trim() mengikuti middleware TrimStrings Laravel, yang juga menyentuh body artikel — sehingga
     // isi berupa spasi saja jatuh ke '' lalu gagal `required`, sama seperti di Laravel.
+    // HTML editor. Disanitasi service (utils/sanitize-html.ts); isi yang kosong SETELAH sanitasi ditolak di sana.
     content: z.string({ error: 'Isi artikel wajib diisi.' }).trim().min(1, { error: 'Isi artikel wajib diisi.' }),
     status: z.enum(['draft', 'published', 'archived'], { error: 'Status tidak valid.' }),
-    publishedAt: publishedAtField
+    publishedAt: publishedAtField,
+    metaTitle: META_TITLE,
+    metaDescription: META_DESCRIPTION,
+    noindex: optionalBool,
+    /** '1' = hapus OG image lama (diabaikan bila berkas `ogImage` baru ikut dikirim). */
+    removeOgImage: optionalBool
+  })
+
+  /** PUT /api/admin/seo-pages/:key — kosong = pakai default SEO_PAGES. */
+  static readonly PAGE_SEO = z.object({
+    title: META_TITLE,
+    description: META_DESCRIPTION,
+    noindex: optionalBool,
+    removeOgImage: optionalBool
   })
 
   /** POST & PUT /api/admin/news-categories — slug diturunkan dari name di service (Str::slug). */

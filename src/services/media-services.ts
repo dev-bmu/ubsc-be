@@ -35,14 +35,15 @@ type Db = Prisma.TransactionClient | typeof prismaClient
  * Dibuat union supaya salah ketik ('facility') gagal saat compile, bukan diam-diam mengembalikan
  * nol media dan section kosong tanpa satu pun error.
  */
-export const MEDIA_MODEL_TYPES = ['Facility', 'FacilityUnit', 'News', 'PromoCarousel', 'SponsorLogo', 'Reel', 'Testimonial'] as const
+export const MEDIA_MODEL_TYPES = ['Facility', 'FacilityUnit', 'News', 'PromoCarousel', 'SponsorLogo', 'Reel', 'Testimonial', 'PageSeo'] as const
 export type MediaModelType = (typeof MEDIA_MODEL_TYPES)[number]
 
 /**
  * Koleksi yang terdaftar di model Laravel (registerMediaCollections). Semuanya singleFile kecuali
- * 'gallery' milik Facility.
+ * 'gallery' milik Facility. Tambahan port (PRD §7.7): 'og_image' (News, PageSeo; singleFile) dan
+ * 'content' (gambar di dalam isi artikel News; banyak berkas).
  */
-export const MEDIA_COLLECTIONS = ['hero', 'gallery', 'thumbnail', 'video', 'slide', 'logo', 'image', 'unit_image'] as const
+export const MEDIA_COLLECTIONS = ['hero', 'gallery', 'thumbnail', 'video', 'slide', 'logo', 'image', 'unit_image', 'og_image', 'content'] as const
 export type MediaCollection = (typeof MEDIA_COLLECTIONS)[number]
 
 /**

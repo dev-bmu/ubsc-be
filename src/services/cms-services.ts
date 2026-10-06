@@ -4,7 +4,9 @@ import type {
   GymTrafficDto,
   KnownGymTrafficDto,
   MembershipPlanDto,
+  NewsDetailDto,
   NewsDto,
+  NewsSection,
   PromoDto,
   ReelDto,
   ReviewDto,
@@ -13,8 +15,10 @@ import type {
 } from '../../shared/contracts'
 import { formatDateDotID, formatDateSlashSpaceID } from '../../shared/format'
 import { prismaClient } from '../application/database'
+import { ResponseError } from '../error/response-error'
 import { logger } from '../utils/logger'
-import { firstUrlFor, listFor } from './media-services'
+import { htmlToText, sanitizeArticleHtml } from '../utils/sanitize-html'
+import { firstUrlFor, listFor, MediaMap } from './media-services'
 
 // ============================================================================
 // === Konten CMS beranda — port HomeController@index + HandleInertiaRequests::share ===
@@ -308,17 +312,10 @@ export async function listSponsors(): Promise<SponsorDto[]> {
  *
  * `content` (LongText) SENGAJA tidak diambil: tidak ada satu pun yang merendernya di beranda.
  */
-export async function listNews(limit?: number): Promise<NewsDto[]> {
+export async function listNews(limit?: number, where: Prisma.NewsWhereInput = {}): Promise<NewsDto[]> {
   const news = await prismaClient.news.findMany({
-    where: { status: 'published' },
-    select: {
-      id: true,
-      title: true,
-      slug: true,
-      excerpt: true,
-      publishedAt: true,
-      newsCategory: { select: { name: true } }
-    },
+    where: { ...where, status: 'published' },
+    select: NEWS_CARD_SELECT,
     // Kunci kedua `createdAt: 'asc'` — arahnya MENAIK, dan itu bukan salah ketik. Laravel hanya menulis
     // `latest('published_at')`, tetapi pada nilai seri MySQL mengembalikan baris dalam urutan PK
     // auto-increment MENAIK, yaitu urutan penyisipan. Padanan urutan penyisipan di skema uuid adalah
@@ -342,7 +339,22 @@ export async function listNews(limit?: number): Promise<NewsDto[]> {
     'thumbnail'
   )
 
-  return news.map((item) => ({
+  return news.map((item) => toNewsDto(item, thumbnails))
+}
+
+const NEWS_CARD_SELECT = {
+  id: true,
+  title: true,
+  slug: true,
+  excerpt: true,
+  publishedAt: true,
+  updatedAt: true,
+  noindex: true,
+  newsCategory: { select: { name: true, slug: true } }
+} as const satisfies Prisma.NewsSelect
+
+function toNewsDto(item: Prisma.NewsGetPayload<{ select: typeof NEWS_CARD_SELECT }>, thumbnails: MediaMap): NewsDto {
+  return {
     id: item.id,
     title: item.title,
     slug: item.slug,
@@ -352,8 +364,76 @@ export async function listNews(limit?: number): Promise<NewsDto[]> {
     // sebagai union dan memilih layoutOverride dari situ); itu urusan seed/CMS, bukan normalisasi di sini.
     category: item.newsCategory?.name ?? '',
     image: firstUrlFor(thumbnails, item.id, 'thumbnail'),
-    description: item.excerpt
-  }))
+    description: item.excerpt,
+    section: newsSection(item.newsCategory?.slug),
+    publishedAt: item.publishedAt?.toISOString() ?? null,
+    updatedAt: item.updatedAt.toISOString(),
+    noindex: item.noindex
+  }
+}
+
+// ===== Halaman detail berita/artikel (PRD tambahan §7.7) =====
+
+/** Slug kategori yang URL publiknya /artikel/<slug>; kategori lain (dan tanpa kategori) -> /berita/<slug>. */
+const ARTIKEL_CATEGORY_SLUG = 'artikel'
+
+export const newsSection = (categorySlug: string | null | undefined): NewsSection => (categorySlug === ARTIKEL_CATEGORY_SLUG ? 'artikel' : 'berita')
+
+const sectionWhere = (section: NewsSection): Prisma.NewsWhereInput =>
+  section === 'artikel'
+    ? { newsCategory: { slug: ARTIKEL_CATEGORY_SLUG } }
+    : { OR: [{ newsCategoryId: null }, { newsCategory: { slug: { not: ARTIKEL_CATEGORY_SLUG } } }] }
+
+const RELATED_NEWS_LIMIT = 3
+const SEO_DESCRIPTION_LENGTH = 160
+const WORDS_PER_MINUTE = 200
+
+/** Potong di batas kata menjadi maks `max` karakter, '…' bila terpotong. */
+function truncateAtWord(text: string, max: number): string {
+  if (text.length <= max) return text
+  const cut = text.slice(0, max - 1)
+  const space = cut.lastIndexOf(' ')
+  return `${(space > 0 ? cut.slice(0, space) : cut).replace(/[\s,.;:!?—–-]+$/, '')}…`
+}
+
+/**
+ * GET /api/public/news/:slug — halaman /berita/<slug> dan /artikel/<slug>. Hanya status 'published';
+ * draft/archived/tidak ada = 404 yang sama (tidak membocorkan keberadaan draft).
+ *
+ * Isi DISANITASI ULANG saat baca: baris lama (seed, data Laravel) tidak pernah lewat sanitasi jalur tulis.
+ * SEO diresolusi di sini supaya landing tidak menulis ulang aturan fallback-nya.
+ */
+export async function getNewsDetail(slug: string): Promise<NewsDetailDto> {
+  const row = await prismaClient.news.findFirst({
+    where: { slug, status: 'published' },
+    select: { ...NEWS_CARD_SELECT, content: true, metaTitle: true, metaDescription: true, author: { select: { name: true } } }
+  })
+  if (!row) throw new ResponseError(404, 'Artikel tidak ditemukan.')
+
+  const [thumbnails, ogImages, related] = await Promise.all([
+    listFor('News', [row.id], 'thumbnail'),
+    listFor('News', [row.id], 'og_image'),
+    listNews(RELATED_NEWS_LIMIT, { id: { not: row.id }, ...sectionWhere(newsSection(row.newsCategory?.slug)) })
+  ])
+  const card = toNewsDto(row, thumbnails)
+
+  const content = sanitizeArticleHtml(row.content)
+  const text = htmlToText(content)
+  const words = text ? text.split(' ').length : 0
+
+  return {
+    ...card,
+    content,
+    authorName: row.author.name,
+    readingMinutes: Math.max(1, Math.ceil(words / WORDS_PER_MINUTE)),
+    seo: {
+      title: row.metaTitle || row.title,
+      description: row.metaDescription || truncateAtWord(row.excerpt?.trim() || text, SEO_DESCRIPTION_LENGTH),
+      ogImage: firstUrlFor(ogImages, row.id, 'og_image') || card.image,
+      noindex: row.noindex
+    },
+    related
+  }
 }
 
 /**

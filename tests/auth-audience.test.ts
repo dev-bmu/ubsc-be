@@ -86,9 +86,10 @@ describe('refresh token', () => {
 
     const second = await refresh(token).expect(200)
     expect(second.body.data.accessToken).toEqual(expect.any(String))
-    // Tidak merotasi lagi dan tidak menimpa cookie pengganti yang sudah dipegang browser.
-    expect(String(second.headers['set-cookie'] ?? '')).not.toContain('ubsc_c_refresh=')
-    expect(await prismaClient.refreshToken.count({ where: { userId: customer.id, revoked: false } })).toBe(1)
+    // Yang kalah mencetak token saudara di family yang sama dan ikut memasang cookie, tanpa mencabut
+    // token yang dipasang balasan pertama: balasan mana pun yang hilang, browser memegang token hidup.
+    expect(String(second.headers['set-cookie'])).toMatch(/ubsc_c_refresh=[0-9a-f]+;/)
+    expect(await prismaClient.refreshToken.count({ where: { userId: customer.id, revoked: false } })).toBe(2)
   })
 
   it('token lama dipakai lagi setelah jendela toleransi = pencurian: semua sesi dicabut', async () => {

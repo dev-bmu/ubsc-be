@@ -1,5 +1,13 @@
 import { Prisma } from '@prisma/client'
-import type { AdminNewsCategoryDto, AdminNewsDto, AdminNewsFormDto, AdminNewsIndexDto, InfoBannerDto, NewsAuthorDto } from '../../shared/contracts'
+import type {
+  AdminNewsCategoryDto,
+  AdminNewsDto,
+  AdminNewsFormDto,
+  AdminNewsIndexDto,
+  InfoBannerDto,
+  NewsAuthorDto,
+  NewsContentImageDto
+} from '../../shared/contracts'
 import { prismaClient } from '../application/database'
 import { TX_OPTIONS } from '../application/transaction'
 import { PERMISSIONS } from '../config/permissions'
@@ -7,11 +15,13 @@ import { ResponseError } from '../error/response-error'
 import { FORBIDDEN_MESSAGE } from '../middleware/permission-middleware'
 import { formatInstant, jakartaWallTimeToUtc, now } from '../utils/clock'
 import { isUniqueViolation } from '../utils/prisma-errors'
+import { htmlToText, sanitizeArticleHtml } from '../utils/sanitize-html'
 import { NewsAdminValidation } from '../validation/news-admin-validation'
 import { Validation } from '../validation/Validation'
+import { newsSection } from './cms-services'
 import { timeAgoId } from './dashboard-services'
-import { deleteForModel, firstUrlFor, listFor, MediaMap, MediaRow } from './media-services'
-import { deleteMediaRow, storePublicMedia, unlinkMediaFiles } from './media-store-services'
+import { deleteForModel, firstUrlFor, listFor, MediaMap, urlFor } from './media-services'
+import { assertImageAcceptable, replaceSingleMedia, storePublicMedia, unlinkMediaFiles } from './media-store-services'
 
 // ============================================================================
 // === CMS berita + kategori + info banner + gym traffic (Fase 8F) ===
@@ -33,6 +43,12 @@ import { deleteMediaRow, storePublicMedia, unlinkMediaFiles } from './media-stor
 export interface UploadedThumbnail {
   buffer: Buffer
   originalname: string
+}
+
+/** req.files dari newsMediaUpload (.fields thumbnail + ogImage). */
+export interface NewsUploadFiles {
+  thumbnail?: UploadedThumbnail[]
+  ogImage?: UploadedThumbnail[]
 }
 
 /**
@@ -138,6 +154,9 @@ const NEWS_SELECT = {
   status: true,
   publishedAt: true,
   updatedAt: true,
+  metaTitle: true,
+  metaDescription: true,
+  noindex: true,
   newsCategory: { select: { id: true, name: true, slug: true } },
   author: { select: { id: true, name: true, avatar: true } }
 } as const satisfies Prisma.NewsSelect
@@ -169,7 +188,7 @@ function toAuthor(author: NewsRow['author']): NewsAuthorDto {
 }
 
 /** Padanan NewsController::transform(). `at` dioper supaya satu daftar memakai satu "sekarang". */
-function toAdminNews(row: NewsRow, thumbnails: MediaMap, at: Date): AdminNewsDto {
+function toAdminNews(row: NewsRow, thumbnails: MediaMap, ogImages: MediaMap, at: Date): AdminNewsDto {
   return {
     id: row.id,
     title: row.title,
@@ -185,8 +204,19 @@ function toAdminNews(row: NewsRow, thumbnails: MediaMap, at: Date): AdminNewsDto
     author: toAuthor(row.author),
     // `getFirstMediaUrl('thumbnail') ?: null` — '' spatie dijatuhkan ke null, sama seperti
     // Testimonial::imageUrl() di cms-services.ts.
-    thumbnail: firstUrlFor(thumbnails, row.id, 'thumbnail') || null
+    thumbnail: firstUrlFor(thumbnails, row.id, 'thumbnail') || null,
+    // SEO (PRD §7.7) — null = landing memakai fallback (judul / excerpt / thumbnail).
+    section: newsSection(row.newsCategory?.slug),
+    metaTitle: row.metaTitle,
+    metaDescription: row.metaDescription,
+    ogImage: firstUrlFor(ogImages, row.id, 'og_image') || null,
+    noindex: row.noindex
   }
+}
+
+/** Thumbnail + OG image sekumpulan artikel — dua koleksi, tanpa ikut menarik gambar isi ('content'). */
+async function articleImages(ids: string[]): Promise<[MediaMap, MediaMap]> {
+  return Promise.all([listFor('News', ids, 'thumbnail'), listFor('News', ids, 'og_image')])
 }
 
 /** Muat ulang satu artikel dalam bentuk DTO index (dipakai balasan store/update dan form edit). */
@@ -194,8 +224,8 @@ async function loadAdminNews(id: string): Promise<AdminNewsDto> {
   const row = await prismaClient.news.findUnique({ where: { id }, select: NEWS_SELECT })
   if (!row) throw new ResponseError(404, 'Artikel tidak ditemukan.')
 
-  const thumbnails = await listFor('News', [id], 'thumbnail')
-  return toAdminNews(row, thumbnails, now())
+  const [thumbnails, ogImages] = await articleImages([id])
+  return toAdminNews(row, thumbnails, ogImages, now())
 }
 
 // ===== Info banner: normalizeSortOrder + scopeOrdered =====
@@ -284,11 +314,7 @@ export async function listAdminNews(): Promise<AdminNewsIndexDto> {
   const at = now()
 
   const rows = await prismaClient.news.findMany({ select: NEWS_SELECT, orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }] })
-  const thumbnails = await listFor(
-    'News',
-    rows.map((row) => row.id),
-    'thumbnail'
-  )
+  const [thumbnails, ogImages] = await articleImages(rows.map((row) => row.id))
 
   const categories = await prismaClient.newsCategory.findMany({
     select: { id: true, name: true, slug: true, _count: { select: { news: true } } },
@@ -298,7 +324,7 @@ export async function listAdminNews(): Promise<AdminNewsIndexDto> {
   await normalizeBannerSortOrder(prismaClient)
 
   return {
-    news: rows.map((row) => toAdminNews(row, thumbnails, at)),
+    news: rows.map((row) => toAdminNews(row, thumbnails, ogImages, at)),
     categories: categories.map((category): AdminNewsCategoryDto => ({
       id: category.id,
       name: category.name,
@@ -353,41 +379,71 @@ function rethrowSlugConflict(error: unknown): never {
 }
 
 /**
- * `$article->addMediaFromRequest('thumbnail')->toMediaCollection('thumbnail')`.
+ * `$article->addMediaFromRequest('thumbnail')->toMediaCollection('thumbnail')`, ditambah OG image (PRD §7.7).
  *
- * Koleksi 'thumbnail' didaftarkan singleFile() di News::registerMediaCollections(), dan pada koleksi
- * singleFile spatie MENGGANTI berkas lama: baris media lamanya dihapus beserta filenya. Karena itu
- * deleteMediaCollection() dipanggil lebih dulu, lalu berkas fisiknya dibuang SETELAH baris DB-nya
- * hilang — pola yang sama dengan attachFacilityMedia() untuk hero (Fase 8A).
- *
- * Tanpa berkas baru, TIDAK ADA yang dihapus: `if ($request->hasFile('thumbnail'))` di Laravel berarti
- * gambar lama bertahan saat form disimpan tanpa mengunggah ulang. Form berita juga tidak punya
- * tombol "hapus thumbnail", jadi tidak ada padanan removeHero di sini.
- *
- * URUTANNYA SIMPAN-DULU-BARU-HAPUS, dan itu bukan selera. storePublicMedia() yang men-decode berkas
- * lewat sharp (padanan aturan `image` Laravel), jadi berkas rusak baru ketahuan DI SINI — di Laravel
- * ia sudah ditolak validator sebelum apa pun ditulis. Kalau koleksi lama dihapus lebih dulu, satu
- * unggahan rusak akan MENGHILANGKAN thumbnail lama padahal di Laravel gambar itu tetap utuh. Urutan
- * ini juga yang dipakai spatie: media baru ditambahkan, lalu batas singleFile membuang yang lama.
+ * Kedua koleksi singleFile: berkas baru MENGGANTI yang lama, dengan urutan simpan-dulu-baru-hapus
+ * (alasannya di replaceSingleMedia). Tanpa berkas baru, thumbnail lama bertahan — `if ($request->hasFile())`
+ * Laravel, dan form berita memang tidak punya tombol "hapus thumbnail". OG image punya: `removeOgImage`.
  */
-async function attachThumbnail(newsId: string, file: UploadedThumbnail | undefined): Promise<void> {
-  if (!file) return
+async function attachArticleMedia(newsId: string, files: NewsUploadFiles, removeOgImage: boolean): Promise<void> {
+  await replaceSingleMedia({ modelType: 'News', modelId: newsId, collectionName: 'thumbnail', field: 'thumbnail' }, files.thumbnail?.[0])
+  await replaceSingleMedia({ modelType: 'News', modelId: newsId, collectionName: 'og_image', field: 'ogImage' }, files.ogImage?.[0], removeOgImage)
+}
 
-  const previous: MediaRow[] = (await listFor('News', [newsId], 'thumbnail')).get(newsId) ?? []
+/**
+ * Periksa isi berkas SEBELUM tulis DB: gambar yang ditolak sharp setelah artikel tersimpan berarti klien
+ * menerima 422 padahal artikelnya sudah ada (dan revalidasi landing terlewat).
+ */
+async function assertArticleImages(files: NewsUploadFiles): Promise<void> {
+  if (files.thumbnail?.[0]) await assertImageAcceptable(files.thumbnail[0].buffer, 'thumbnail')
+  if (files.ogImage?.[0]) await assertImageAcceptable(files.ogImage[0].buffer, 'ogImage')
+}
 
-  await storePublicMedia({
+// ===== Isi artikel (HTML editor) =====
+
+/**
+ * Pemilik sementara gambar isi: editor mengunggah gambar SEBELUM artikelnya tersimpan (bahkan sebelum
+ * ada id saat membuat artikel baru), jadi barisnya lahir dengan modelId ini lalu diklaim saat simpan.
+ */
+const UNATTACHED = 'unattached'
+
+/** Sanitasi isi; yang tersisa tanpa teks dan tanpa gambar (mis. '<p></p>' editor kosong) ditolak. */
+function cleanContent(html: string): string {
+  const content = sanitizeArticleHtml(html)
+  if (!htmlToText(content) && !content.includes('<img')) throw fieldError('content', 'Isi artikel wajib diisi.')
+  return content
+}
+
+/**
+ * Tautkan gambar isi yang masih 'unattached' ke artikel yang isinya merujuknya (URL memuat media/<uuid>/).
+ * Gambar yang sudah milik artikel lain tidak dipindah di sini; destroyNews() memindahkannya ke artikel lain
+ * yang masih merujuknya sebelum menghapus koleksi artikel pemiliknya.
+ *
+ * ponytail: unggahan editor yang tidak pernah ikut tersimpan (form dibatalkan, gambar dihapus sebelum
+ * simpan) tetap 'unattached' selamanya — baris + berkasnya tidak disapu. Tambah sapuan berkala
+ * (modelId 'unattached' & createdAt > 1 hari) bila menumpuk.
+ */
+async function claimContentImages(newsId: string, content: string): Promise<void> {
+  const uuids = [...new Set(Array.from(content.matchAll(/media\/([0-9a-f-]{36})\//gi), (match) => match[1].toLowerCase()))]
+  if (uuids.length === 0) return
+  await prismaClient.media.updateMany({
+    where: { modelType: 'News', collectionName: 'content', modelId: UNATTACHED, uuid: { in: uuids } },
+    data: { modelId: newsId }
+  })
+}
+
+/** POST /api/admin/news/content-images — field `image`. Dibalas URL publik untuk disisipkan editor. */
+export async function storeContentImage(file: UploadedThumbnail | undefined): Promise<NewsContentImageDto> {
+  if (!file) throw fieldError('image', 'Pilih gambar terlebih dahulu.')
+  const row = await storePublicMedia({
     modelType: 'News',
-    modelId: newsId,
-    collectionName: 'thumbnail',
+    modelId: UNATTACHED,
+    collectionName: 'content',
     buffer: file.buffer,
     originalName: file.originalname,
-    field: 'thumbnail'
+    field: 'image'
   })
-
-  // Hanya baris LAMA yang dibuang — deleteMediaCollection() akan ikut menghapus baris yang baru saja
-  // dibuat. Berkas fisiknya dihapus paling akhir: unlink tidak bisa di-rollback.
-  for (const row of previous) await deleteMediaRow(row.id)
-  unlinkMediaFiles(previous)
+  return { url: urlFor(row) }
 }
 
 /**
@@ -398,16 +454,18 @@ async function attachThumbnail(newsId: string, file: UploadedThumbnail | undefin
  * yang ditolak hanya percobaan menerbitkan. Gerbang di baris route tetap cms.manage saja — meletakkan
  * news.publish di sana akan memblokir penyimpanan draft, perilaku yang tidak ada di Laravel.
  *
- * `author_id` = Auth::id() (dioper controller lewat requireUser). Media dilampirkan SETELAH barisnya
- * ada, sama seperti Laravel: kalau unggahan gagal, artikelnya tetap tersimpan dan staff tinggal
- * mengunggah ulang.
+ * `author_id` = Auth::id() (dioper controller lewat requireUser). Isi berkas thumbnail/ogImage diperiksa
+ * SEBELUM baris dibuat (assertArticleImages), jadi gambar yang ditolak = 422 tanpa artikel tersimpan; media
+ * baru dilampirkan SETELAH barisnya ada, sama seperti Laravel.
  *
  * Laravel redirect ke admin.news.index; di sini dibalas ARTIKELNYA dalam bentuk AdminNewsDto — bentuk
  * transform() yang sama dengan index, sehingga panel bisa menyisipkan satu baris tanpa memuat ulang
  * seluruh daftar.
  */
-export async function storeNews(request: unknown, file: UploadedThumbnail | undefined, authorId: string, gate: StaffGate): Promise<AdminNewsDto> {
+export async function storeNews(request: unknown, files: NewsUploadFiles, authorId: string, gate: StaffGate): Promise<AdminNewsDto> {
   const data = Validation.validate(NewsAdminValidation.ARTICLE, request)
+  const content = cleanContent(data.content)
+  await assertArticleImages(files)
   if (data.status === 'published') assertCan(gate, PERMISSIONS.NEWS_PUBLISH)
 
   await assertCategoryExists(data.newsCategoryId)
@@ -421,15 +479,19 @@ export async function storeNews(request: unknown, file: UploadedThumbnail | unde
         title: data.title,
         slug: data.slug,
         excerpt: data.excerpt ?? null,
-        content: data.content,
+        content,
         status: data.status,
-        publishedAt: resolvePublishedAt(data.status, data.publishedAt, null)
+        publishedAt: resolvePublishedAt(data.status, data.publishedAt, null),
+        metaTitle: data.metaTitle,
+        metaDescription: data.metaDescription,
+        noindex: data.noindex
       },
       select: { id: true }
     })
     .catch(rethrowSlugConflict)
 
-  await attachThumbnail(article.id, file)
+  await claimContentImages(article.id, content)
+  await attachArticleMedia(article.id, files, data.removeOgImage ?? false)
   return loadAdminNews(article.id)
 }
 
@@ -442,9 +504,13 @@ export async function storeNews(request: unknown, file: UploadedThumbnail | unde
  *
  * `author_id` TIDAK ikut diubah — Laravel tidak menyertakannya di array update(), jadi penulis asli
  * tetap tercatat meski yang menyunting orang lain.
+ *
+ * Field SEO yang ABSEN (undefined) tidak diubah; yang dikirim kosong menjadi null (= pakai fallback).
  */
-export async function updateNews(id: string, request: unknown, file: UploadedThumbnail | undefined, gate: StaffGate): Promise<AdminNewsDto> {
+export async function updateNews(id: string, request: unknown, files: NewsUploadFiles, gate: StaffGate): Promise<AdminNewsDto> {
   const data = Validation.validate(NewsAdminValidation.ARTICLE, request)
+  const content = cleanContent(data.content)
+  await assertArticleImages(files)
 
   const existing = await prismaClient.news.findUnique({ where: { id }, select: { id: true, status: true, publishedAt: true } })
   if (!existing) throw new ResponseError(404, 'Artikel tidak ditemukan.')
@@ -462,15 +528,19 @@ export async function updateNews(id: string, request: unknown, file: UploadedThu
         title: data.title,
         slug: data.slug,
         excerpt: data.excerpt ?? null,
-        content: data.content,
+        content,
         status: data.status,
-        publishedAt: resolvePublishedAt(data.status, data.publishedAt, existing.publishedAt)
+        publishedAt: resolvePublishedAt(data.status, data.publishedAt, existing.publishedAt),
+        metaTitle: data.metaTitle,
+        metaDescription: data.metaDescription,
+        noindex: data.noindex
       },
       select: { id: true }
     })
     .catch(rethrowSlugConflict)
 
-  await attachThumbnail(id, file)
+  await claimContentImages(id, content)
+  await attachArticleMedia(id, files, data.removeOgImage ?? false)
   return loadAdminNews(id)
 }
 
@@ -481,6 +551,9 @@ export async function updateNews(id: string, request: unknown, file: UploadedThu
  * listener `deleting`). Di sini itu harus eksplisit: relationMode="prisma" tidak punya cascade dan
  * Media tidak punya relasi, jadi deleteForModel() dipanggil DALAM transaksi yang sama (R2) sedangkan
  * berkas fisiknya baru dibuang SETELAH commit — penghapusan berkas tidak bisa di-rollback.
+ * deleteForModel() tidak memfilter koleksi: thumbnail, og_image, dan gambar isi ('content') ikut terhapus —
+ * KECUALI gambar isi yang masih dirujuk artikel lain (disalin-tempel antar-artikel): barisnya dipindah ke
+ * artikel itu lebih dulu, sehingga deleteForModel() tidak mengembalikannya dan berkasnya tidak dibuang.
  */
 export async function destroyNews(id: string): Promise<{ id: string }> {
   const existing = await prismaClient.news.findUnique({ where: { id }, select: { id: true } })
@@ -488,6 +561,11 @@ export async function destroyNews(id: string): Promise<{ id: string }> {
 
   const removed = await prismaClient.$transaction(async (tx) => {
     await tx.news.delete({ where: { id } })
+    const images = await tx.media.findMany({ where: { modelType: 'News', modelId: id, collectionName: 'content' }, select: { id: true, uuid: true } })
+    for (const image of images) {
+      const other = await tx.news.findFirst({ where: { content: { contains: `media/${image.uuid}/` } }, select: { id: true } })
+      if (other) await tx.media.update({ where: { id: image.id }, data: { modelId: other.id } })
+    }
     return deleteForModel('News', id, tx)
   }, TX_OPTIONS)
 

@@ -10,8 +10,12 @@ module.exports = {
   // Transpile per berkas (isolatedModules di tsconfig.test.json). Error tipe diperiksa terpisah oleh
   // `npm run typecheck`, yang mencakup tests/.
   transform: {
-    '^.+\\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.test.json' }]
+    '^.+\\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.test.json' }],
+    // sanitize-html memuat htmlparser2 12 yang ESM-only. Node 24 (dev/produksi) me-require ESM sendiri,
+    // tapi loader modul Jest 29 tidak — paket-paket itu ditranspile ke CommonJS khusus di test.
+    '^.+\\.js$': ['ts-jest', { tsconfig: { allowJs: true, module: 'commonjs', isolatedModules: true } }]
   },
+  transformIgnorePatterns: ['/node_modules/(?!(htmlparser2|domhandler|domutils|dom-serializer|domelementtype|entities)/)'],
 
   // Sekali sebelum seluruh suite: tolak database yang namanya tidak berakhiran
   // _test, lalu prisma migrate deploy ke database itu.

@@ -2,16 +2,17 @@ import express from 'express'
 import { PERMISSIONS } from '../../config/permissions'
 import * as ctrl from '../../controller/news-admin-controller'
 import { requirePermission } from '../../middleware/permission-middleware'
-import { singleFileUpload } from '../../middleware/upload-middleware'
+import { fieldsFileUpload, singleFileUpload } from '../../middleware/upload-middleware'
 
 // ===== Route CMS berita (staff) — Fase 8F =====
 // Prefix penuh (/api/admin/news) dideklarasikan di private-api.ts.
 //
 //   GET    /api/admin/news              cms.manage   daftar penuh + kategori + info banner (AdminNewsIndexDto)
 //   GET    /api/admin/news/create       cms.manage   form kosong (AdminNewsFormDto, article: null)
-//   POST   /api/admin/news              cms.manage   multipart, `thumbnail` opsional -> 201 AdminNewsDto
+//   POST   /api/admin/news              cms.manage   multipart, `thumbnail` + `ogImage` opsional -> 201 AdminNewsDto
+//   POST   /api/admin/news/content-images cms.manage multipart `image` -> 201 NewsContentImageDto (gambar isi editor)
 //   GET    /api/admin/news/:id/edit     cms.manage   form terisi (AdminNewsFormDto)
-//   PUT    /api/admin/news/:id          cms.manage   multipart, `thumbnail` opsional -> AdminNewsDto
+//   PUT    /api/admin/news/:id          cms.manage   multipart, `thumbnail` + `ogImage` opsional -> AdminNewsDto
 //   DELETE /api/admin/news/:id          cms.manage   -> { id } (baris media + berkasnya ikut dihapus)
 //
 // `authorize('manage-cms')` Laravel = cms.manage, dan KEENAM aksinya memakai gate yang sama persis —
@@ -51,24 +52,39 @@ import { singleFileUpload } from '../../middleware/upload-middleware'
 // Tidak ada prefix lain di private-api.ts yang bertabrakan: '/api/admin/settings' belum dipakai
 // (pengaturan rekening Fase 8D hidup di '/api/admin/payments/settings', satu segmen lebih dalam).
 
+const CMS_IMAGE_TOO_LARGE = 'Ukuran gambar maksimal 5 MB.'
+
 /**
- * `'thumbnail' => ['nullable','image','max:5120']`.
+ * `'thumbnail' => ['nullable','image','max:5120']`, ditambah `ogImage` (PRD §7.7) dalam satu submit.
  *
- * Dirakit di sini dari factory singleFileUpload, bukan ditambahkan sebagai konstanta baru di
+ * Dirakit di sini dari factory upload-middleware, bukan ditambahkan sebagai konstanta baru di
  * middleware/upload-middleware.ts: berkas itu di luar kepemilikan agen Fase 8F ini. CMS_IMAGE =
  * 5 MB, angka yang sama dengan max:5120 Laravel. Validasi ISI berkas (benar-benar gambar, format
  * jpeg/png/webp, batas dimensi) dilakukan storePublicMedia() lewat decoder sharp — padanan aturan
  * `image` Laravel, bukan pemeriksaan Content-Type yang ditulis klien.
+ *
+ * fieldSize 2 MB: `content` kini HTML editor, dan batas bawaan multer (1 MB per field teks) terlalu
+ * sempit untuk artikel panjang.
  */
-const newsThumbnailUpload = singleFileUpload('thumbnail', 'CMS_IMAGE', { tooLargeMessage: 'Ukuran gambar maksimal 5 MB.' })
+const newsMediaUpload = fieldsFileUpload(
+  [
+    { name: 'thumbnail', maxCount: 1 },
+    { name: 'ogImage', maxCount: 1 }
+  ],
+  'CMS_IMAGE',
+  { tooLargeMessage: CMS_IMAGE_TOO_LARGE, fieldSize: 2 * 1024 * 1024 }
+)
+
+const contentImageUpload = singleFileUpload('image', 'CMS_IMAGE', { tooLargeMessage: CMS_IMAGE_TOO_LARGE })
 
 const adminNewsRoutes = express.Router()
 
 adminNewsRoutes.get('/', requirePermission(PERMISSIONS.CMS_MANAGE), ctrl.index)
 adminNewsRoutes.get('/create', requirePermission(PERMISSIONS.CMS_MANAGE), ctrl.createForm)
-adminNewsRoutes.post('/', newsThumbnailUpload, requirePermission(PERMISSIONS.CMS_MANAGE), ctrl.store)
+adminNewsRoutes.post('/', newsMediaUpload, requirePermission(PERMISSIONS.CMS_MANAGE), ctrl.store)
+adminNewsRoutes.post('/content-images', contentImageUpload, requirePermission(PERMISSIONS.CMS_MANAGE), ctrl.contentImageStore)
 adminNewsRoutes.get('/:id/edit', requirePermission(PERMISSIONS.CMS_MANAGE), ctrl.editForm)
-adminNewsRoutes.put('/:id', newsThumbnailUpload, requirePermission(PERMISSIONS.CMS_MANAGE), ctrl.update)
+adminNewsRoutes.put('/:id', newsMediaUpload, requirePermission(PERMISSIONS.CMS_MANAGE), ctrl.update)
 adminNewsRoutes.delete('/:id', requirePermission(PERMISSIONS.CMS_MANAGE), ctrl.destroy)
 
 export default adminNewsRoutes

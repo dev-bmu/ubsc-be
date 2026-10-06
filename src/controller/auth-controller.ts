@@ -21,8 +21,30 @@ import { ok } from '../utils/respond'
 const clientIp = (req: Request): string | null =>
   (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() || req.socket.remoteAddress || null
 
-const readRefreshCookie = (req: Request, audience: TokenAudience): string | undefined =>
-  (req.cookies as Record<string, string | undefined>)[getRefreshCookieName(audience)]
+/**
+ * SEMUA nilai cookie refresh audience ini, urut seperti di header Cookie. Sengaja membaca header
+ * mentah: cookie-parser hanya menyimpan nilai PERTAMA, dan browser yang masih membawa sisa cookie
+ * ber-Domain lama mengirim cookie basi itu lebih dulu daripada cookie host-only yang segar.
+ */
+const readRefreshCookies = (req: Request, audience: TokenAudience): string[] => {
+  const name = getRefreshCookieName(audience)
+  const values = (req.headers.cookie ?? '').split(';').flatMap((pair) => {
+    const eq = pair.indexOf('=')
+    if (eq < 0 || pair.slice(0, eq).trim() !== name) return []
+    const raw = pair
+      .slice(eq + 1)
+      .trim()
+      .replace(/^"(.*)"$/, '$1')
+    try {
+      return raw ? [decodeURIComponent(raw)] : []
+    } catch {
+      return [raw]
+    }
+  })
+  // Browser nyata membawa paling banyak 2-3 scope (host-only, domain bayangan, COOKIE_DOMAIN). Dibatasi
+  // supaya satu header Cookie berisi puluhan nilai tidak menjadi puluhan lookup di endpoint tanpa rate limit.
+  return [...new Set(values)].slice(0, 4)
+}
 
 /** Jalur x-service-key tidak melampirkan user; endpoint sesi memang butuh user. */
 const currentUserId = (req: Request): string => {
@@ -45,7 +67,7 @@ export const refresh =
   (audience: TokenAudience): RequestHandler =>
   async (req, res, next) => {
     try {
-      ok(res, await refreshAuth(readRefreshCookie(req, audience), audience, clientIp(req), res))
+      ok(res, await refreshAuth(readRefreshCookies(req, audience), audience, clientIp(req), res))
     } catch (error) {
       next(error)
     }
@@ -55,7 +77,7 @@ export const logout =
   (audience: TokenAudience): RequestHandler =>
   async (req, res, next) => {
     try {
-      ok(res, await logoutAuth(readRefreshCookie(req, audience), audience, res))
+      ok(res, await logoutAuth(readRefreshCookies(req, audience), audience, res))
     } catch (error) {
       next(error)
     }
