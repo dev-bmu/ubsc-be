@@ -835,6 +835,11 @@ model Transaction {
   @@index([userId])
   @@index([paymentStatus, createdAt])
   @@index([verificationStatus, proofUploadedAt])
+  // Tab Lunas antrean pembayaran (satu-satunya tab yang tumbuh tanpa batas): WHERE paymentStatus='PAID'
+  // ORDER BY paidAt DESC, receiptSequence DESC LIMIT n terbaca langsung dari indeks, tanpa filesort.
+  // COUNT(*) untuk meta paginasinya juga cukup dari indeks — selama filternya hanya paymentStatus
+  // (lihat queueQuery di payment-admin-services.ts).
+  @@index([paymentStatus, paidAt, receiptSequence])
   @@index([verifiedById])
   @@map("transactions")
 }

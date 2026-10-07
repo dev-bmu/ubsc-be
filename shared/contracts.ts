@@ -1298,7 +1298,11 @@ export interface PaymentSettingsDto {
   accurateCashAccountNo: string
 }
 
-/** GET /api/admin/payments?tab= — maks 100 baris, metode manual. */
+/**
+ * GET /api/admin/payments?tab=&q=&page=&perPage= — metode manual, ter-paginasi (perPage 1..100, default 20;
+ * meta paginasi di envelope). q mencari invoice, nama/email/no. HP pelanggan, fasilitas, paket, dan nominal
+ * (harga atau total transfer). counts tidak terpengaruh q.
+ */
 export interface AdminPaymentIndexDto extends PaymentSettingsDto {
   tab: PaymentQueueTab
   transactions: AdminPaymentRowDto[]

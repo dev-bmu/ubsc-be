@@ -1,13 +1,14 @@
 import { randomUUID } from 'crypto'
 import { Prisma } from '@prisma/client'
 import sharp from 'sharp'
-import type { AdminPaymentIndexDto, AdminPaymentRowDto, PaymentQueueTab, PaymentSettingsDto } from '../../shared/contracts'
+import type { AdminPaymentIndexDto, AdminPaymentRowDto, ApiMeta, PaymentQueueTab, PaymentSettingsDto } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
 import { TX_OPTIONS } from '../application/transaction'
 import { UPLOAD_LIMITS } from '../config/upload'
 import { ResponseError } from '../error/response-error'
 import { dateOnlyToString, formatInstant, jakartaWallTimeToUtc } from '../utils/clock'
 import { transferTotal } from '../utils/money'
+import { paginationMeta } from '../utils/respond'
 import { deleteObjects, ownedPublicKey, publicUrl, putObject } from '../utils/storage'
 import { PaymentValidation } from '../validation/payment-validation'
 import { Validation } from '../validation/Validation'
@@ -21,21 +22,8 @@ import { accurateCashAccountNo, adminFee, bankAccount, holdMinutes, qrisSetting,
 // Rekening & durasi hold dibaca lewat bankAccount()/holdMinutes() yang sama dengan jalur pelanggan,
 // jadi panel dan halaman pembayaran tidak pernah berbeda pendapat.
 
-const QUEUE_LIMIT = 100
-const TABS: readonly PaymentQueueTab[] = ['awaiting', 'rejected', 'paid']
-
 /** Transaction::scopeAwaitingVerification — UNPAID + bukti sudah masuk. */
 const AWAITING_VERIFICATION = { paymentStatus: 'UNPAID', verificationStatus: 'awaiting' } satisfies Prisma.TransactionWhereInput
-
-/**
- * `$request->string('tab')->toString() ?: 'awaiting'` + `match default`. PENYIMPANGAN kecil: Laravel
- * menggemakan string mentah (tab=xyz -> 'xyz' walau query-nya awaiting); di sini tab dinormalisasi
- * sehingga yang digemakan selalu tab yang benar-benar dijalankan (PaymentQueueTab).
- */
-function normalizeTab(value: unknown): PaymentQueueTab {
-  const tab = typeof value === 'string' ? value.trim() : ''
-  return (TABS as readonly string[]).includes(tab) ? (tab as PaymentQueueTab) : 'awaiting'
-}
 
 // ===== Pemuat + present() =====
 
@@ -117,31 +105,82 @@ function presentRow(t: QueueRow): AdminPaymentRowDto {
  *   awaiting  oldest('proof_uploaded_at')  -> proofUploadedAt ASC, receiptSequence ASC
  *   paid      latest('paid_at')            -> paidAt DESC, receiptSequence DESC
  *   rejected  tanpa orderBy (urutan fisik MySQL ~ PK) -> receiptSequence ASC
+ *
+ * Tab Lunas sengaja TANPA method='manual' (beda dari Laravel): method tidak ada di indeks, jadi COUNT(*)
+ * meta paginasi akan me-lookup setiap baris PAID (~200 ms per 50 rb baris); tanpa itu COUNT terjawab dari
+ * indeks (~20 ms). Hasilnya sama karena 'manual' satu-satunya method yang pernah ditulis (default kolom,
+ * manual-payment-services, data Laravel). Bila kelak ada method lain, kembalikan filternya + indeks
+ * [paymentStatus, method, ...] — dan periksa EXPLAIN: optimizer MySQL 8.0 masih memilih indeks
+ * paymentStatus_createdAt untuk COUNT walau indeks itu tersedia.
  */
 function queueQuery(tab: PaymentQueueTab): { where: Prisma.TransactionWhereInput; orderBy: Prisma.TransactionOrderByWithRelationInput[] } {
   switch (tab) {
     case 'rejected':
       return { where: { method: 'manual', verificationStatus: 'rejected' }, orderBy: [{ receiptSequence: 'asc' }] }
     case 'paid':
-      return { where: { method: 'manual', paymentStatus: 'PAID' }, orderBy: [{ paidAt: 'desc' }, { receiptSequence: 'desc' }] }
+      return { where: { paymentStatus: 'PAID' }, orderBy: [{ paidAt: 'desc' }, { receiptSequence: 'desc' }] }
     default:
       return { where: { method: 'manual', ...AWAITING_VERIFICATION }, orderBy: [{ proofUploadedAt: 'asc' }, { receiptSequence: 'asc' }] }
   }
 }
 
-export async function listPaymentQueue(query: unknown): Promise<AdminPaymentIndexDto> {
-  const tab = normalizeTab((query as Record<string, unknown> | undefined)?.tab)
-  const { where, orderBy } = queueQuery(tab)
+/** Kolom Int MySQL; angka di atasnya bukan nominal (mis. no. HP) dan akan ditolak Prisma. */
+const INT_MAX = 2_147_483_647
 
-  const [rows, awaiting, rejected, settings] = await Promise.all([
-    prismaClient.transaction.findMany({ where, orderBy, take: QUEUE_LIMIT, include: QUEUE_INCLUDE }),
-    // Hitungan badge TIDAK difilter method='manual' — sama persis dengan Laravel.
+/**
+ * Pencarian: invoice, pelanggan (akun: nama/email/no. HP; walk-in: nama/no. HP di booking/membership),
+ * fasilitas, paket. LIKE mengikuti collation kolom (utf8mb4 *_ci) -> tidak peka huruf besar.
+ *
+ * Kata kunci yang berupa angka setelah sen ',00', 'Rp', spasi, titik, koma dibuang ('Rp 150.732') juga mencocokkan
+ * nominal: harga (amount) ATAU total transfer amount + adminFee + uniqueCode. Total dihitung lewat raw
+ * SQL karena Prisma tidak bisa menjumlah kolom di where; pendingTotal tidak dipakai karena dikosongkan
+ * saat disetujui/ditolak, padahal staff juga mencocokkan mutasi dengan transaksi yang sudah lunas.
+ *
+ * ponytail: LIKE '%q%' + jumlah kolom = full scan transactions. Cukup untuk puluhan ribu baris; bila
+ * terasa lambat, tambah FULLTEXT / kolom total ber-indeks.
+ */
+async function searchWhere(q: string): Promise<Prisma.TransactionWhereInput | null> {
+  if (!q) return null
+  // Prisma tidak meng-escape wildcard LIKE: '%' / '_' akan mencocokkan semua baris. '\' = escape bawaan MySQL.
+  const contains = { contains: q.replace(/[\\%_]/g, (c) => '\\' + c) }
+  const or: Prisma.TransactionWhereInput[] = [
+    { invoiceNumber: contains },
+    { user: { is: { OR: [{ name: contains }, { email: contains }, { phoneNumber: contains }] } } },
+    { booking: { is: { OR: [{ customerName: contains }, { customerPhone: contains }, { facility: { is: { name: contains } } }] } } },
+    { membership: { is: { OR: [{ customerName: contains }, { membershipPlan: { is: { name: contains } } }] } } }
+  ]
+
+  // Sen nol dari mutasi bank ('150.732,00' / '150,732.00') dibuang dulu, kalau tidak ikut jadi digit.
+  const digits = q.replace(/[.,]00\s*$/, '').replace(/rp|[\s.,]/gi, '')
+  const nominal = /^\d+$/.test(digits) ? Number(digits) : 0
+  if (nominal > 0 && nominal <= INT_MAX) {
+    const totals = await prismaClient.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM transactions WHERE method = 'manual' AND amount + adminFee + COALESCE(uniqueCode, 0) = ${nominal}`
+    or.push({ amount: nominal }, { id: { in: totals.map((t) => t.id) } })
+  }
+  return { OR: or }
+}
+
+export async function listPaymentQueue(query: unknown): Promise<{ data: AdminPaymentIndexDto; meta: ApiMeta }> {
+  const { tab, q, page, perPage } = Validation.validate(PaymentValidation.QUEUE, query)
+  const queue = queueQuery(tab)
+  const search = await searchWhere(q)
+  const where = search ? { AND: [queue.where, search] } : queue.where
+
+  const [rows, total, awaiting, rejected, settings] = await Promise.all([
+    // Halaman lewat akhir -> skip melewati semua baris -> daftar kosong (meta tetap benar), bukan 404.
+    prismaClient.transaction.findMany({ where, orderBy: queue.orderBy, skip: (page - 1) * perPage, take: perPage, include: QUEUE_INCLUDE }),
+    prismaClient.transaction.count({ where }),
+    // Hitungan badge TIDAK difilter method='manual' maupun pencarian — sama persis dengan Laravel.
     prismaClient.transaction.count({ where: AWAITING_VERIFICATION }),
     prismaClient.transaction.count({ where: { verificationStatus: 'rejected' } }),
     paymentSettings()
   ])
 
-  return { tab, transactions: rows.map(presentRow), counts: { awaiting, rejected }, ...settings }
+  return {
+    data: { tab, transactions: rows.map(presentRow), counts: { awaiting, rejected }, ...settings },
+    meta: paginationMeta(page, perPage, total)
+  }
 }
 
 /** Keadaan pengaturan, dibaca lewat helper yang sama dengan jalur pelanggan. */

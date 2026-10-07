@@ -14,7 +14,8 @@ import { sendProofFile } from './payment-controller'
 
 export const index: RequestHandler = async (req, res, next) => {
   try {
-    ok(res, await listPaymentQueue(req.query))
+    const { data, meta } = await listPaymentQueue(req.query)
+    ok(res, data, meta)
   } catch (error) {
     next(error)
   }

@@ -23,7 +23,33 @@ const CODE_MAX_RANGE = 'Batas kode unik harus antara 100 dan 999.'
 const requiredInt = (required: string, min: number, max: number, range: string) =>
   z.preprocess(emptyToUndefined, z.coerce.number({ error: required }).int({ error: range }).min(min, { error: range }).max(max, { error: range }))
 
+const PAGE_RANGE = 'Nomor halaman tidak valid.'
+const PER_PAGE_RANGE = 'Jumlah per halaman harus antara 1 dan 100.'
+
+/** Bilangan bulat opsional dari query string: absen / '' -> fallback, selain itu wajib dalam rentang. */
+const queryInt = (fallback: number, min: number, max: number, range: string) =>
+  z.preprocess(
+    emptyToUndefined,
+    z.coerce.number({ error: range }).int({ error: range }).min(min, { error: range }).max(max, { error: range }).default(fallback)
+  )
+
 export class PaymentValidation {
+  /**
+   * GET /api/admin/payments — antrean ter-paginasi. perPage maks 100 menggantikan batas keras 100 baris
+   * yang lama; q/page/perPage yang salah -> 400 VALIDATION_ERROR.
+   *
+   * tab: `$request->string('tab')->toString() ?: 'awaiting'` + `match default` Laravel — nilai tak dikenal
+   * jatuh ke 'awaiting', bukan 400. PENYIMPANGAN kecil: Laravel menggemakan string mentah (tab=xyz -> 'xyz');
+   * di sini yang digemakan selalu tab yang benar-benar dijalankan.
+   */
+  static readonly QUEUE = z.object({
+    tab: z.preprocess((value) => (typeof value === 'string' ? value.trim() : value), z.enum(['awaiting', 'rejected', 'paid'])).catch('awaiting'),
+    q: optionalText(100, 'Kata kunci pencarian maksimal 100 karakter.'),
+    // Batas atas hanya menjaga skip tetap di rentang Int (100 x 10 juta); halaman lewat akhir = daftar kosong.
+    page: queryInt(1, 1, 10_000_000, PAGE_RANGE),
+    perPage: queryInt(20, 1, 100, PER_PAGE_RANGE)
+  })
+
   /** POST /api/admin/payments/:transactionId/reject — alasannya dikirim ke pelanggan lewat email. */
   static readonly REJECT = z.object({
     reason: z
