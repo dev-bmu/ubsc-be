@@ -54,7 +54,9 @@ export class PaymentValidation {
         .max(1440, { error: HOLD_RANGE })
     ),
     adminFee: requiredInt(FEE_REQUIRED, 0, 10_000, FEE_RANGE),
-    uniqueCodeMax: requiredInt(CODE_MAX_REQUIRED, 100, 999, CODE_MAX_RANGE)
+    uniqueCodeMax: requiredInt(CODE_MAX_REQUIRED, 100, 999, CODE_MAX_RANGE),
+    /** Kolom EXPENSE ACCOUNT NO export Penerimaan Penjualan Accurate (template: maks 30). Boleh kosong. */
+    accurateCashAccountNo: optionalText(30, 'Kode akun Kas/Bank Accurate maksimal 30 karakter.')
   })
 }
 

@@ -654,7 +654,7 @@ Selagi mesin export dibangun, beberapa yang murah dan langsung berguna:
 | B     | `customerNumber` + foto member + `pending_payment` — **kode selesai 2026-09-25, lihat 7.1**           | Fondasi bersama fitur 2 & 3              |
 | C     | Fitur 3 (checkout membership web + FO) — **kode selesai 2026-09-25, lihat 7.2**                       | Mengisi data yang dibutuhkan E-Card      |
 | D     | Fitur 2 (E-Card + meja scan + analitik) — **kode selesai 2026-09-26, lihat 7.3**                      | Butuh member yang sudah berkartu         |
-| E     | Export Accurate — **pelanggan + faktur selesai 2026-09-28, lihat 7.4**; penerimaan penjualan menyusul | Butuh jawaban dari finance               |
+| E     | Export Accurate — **pelanggan + faktur 2026-09-28, penerimaan penjualan 2026-10-07, lihat 7.4**       | Butuh jawaban dari finance               |
 
 Tahap A bisa berjalan paralel dengan B. Tahap D tidak bisa didemokan sebelum C jalan — tidak
 ada member yang punya kartu.
@@ -822,8 +822,8 @@ Feistel dari `customerSequence`. Bisa dibalik tanpa kolom baru, dan tidak ada hu
 tidak tertukar saat diketik. Kunci permutasinya tidak boleh diubah: mengubahnya mengganti nomor di
 semua kartu.
 
-**Export Accurate (Finance → Export Accurate, izin `reports.read`).** Dua berkas .xlsx per rentang tanggal
-(maks 31 hari). Kolom keduanya identik dengan template dari finance.
+**Export Accurate (Finance → Export Accurate, izin `reports.read`).** Tiga berkas .xlsx per rentang tanggal
+(maks 31 hari). Kolom ketiganya identik dengan template dari finance (penerimaan: lihat susulan 2026-10-07).
 
 1. _Pelanggan_: pelanggan yang muncul di faktur rentang itu (keputusan client). `ID Pelanggan` =
    `WEB.0001` dst. (`User.accurateSequence`), ID terpisah dari nomor member.
@@ -833,7 +833,7 @@ semua kartu.
 2. _Faktur penjualan_: semua transaksi yang dibuat pada rentang itu, lunas maupun belum. Yang batal,
    kedaluwarsa, dan bernominal 0 tidak ikut.
    - Satu transaksi = satu faktur. NUMBER = nomor kuitansi UBSC, sehingga impor ulang ditolak Accurate
-     dan export penerimaan kelak bisa merujuknya.
+     dan export penerimaan merujuknya (PAYMENT NUMBER).
    - BRANCH = `1. UBSC - Jasa Cabang Olahraga`.
    - Baris item: fasilitas atau paket (`accurateItemNo`, diisi di form Fasilitas / Paket), lalu baris
      `UBSC-ADMIN` (biaya admin) dan `UBSC-KODEUNIK` (kode unik). Membership manual tanpa paket memakai
@@ -848,7 +848,7 @@ semua kartu.
 - TAXABLE (PPN) dan WAREHOUSE dikosongkan, jadi ikut default Accurate. Template menandai WAREHOUSE
   wajib; untuk item jenis jasa kolom itu biasanya tidak dipakai. Bila impor menolak, cukup tambah satu
   konstanta.
-- Export penerimaan penjualan (yang lunas di hari itu) menyusul sesuai permintaan client.
+- Kode akun Kas/Bank untuk export penerimaan penjualan (lihat susulan 2026-10-07 di bawah).
 
 **Susulan 2026-09-28 (sore).**
 
@@ -872,7 +872,16 @@ semua kartu.
 - **Faktur satu baris.** Permintaan client: biaya admin dan kode unik tidak lagi jadi baris item terpisah. Satu
   faktur = satu baris item seharga total transfer; rinciannya dicatat di ITEM NOTES. Item `UBSC-ADMIN` dan
   `UBSC-KODEUNIK` tidak dipakai lagi. Panel Export Accurate pindah ke kepala card tabel ledger.
-- **Export penerimaan penjualan** menunggu template impor resminya dari Accurate (kolomnya tidak bisa ditebak).
+- **Export penerimaan penjualan (susulan 2026-10-07).** Template resmi dari finance ("Data Pelunasan
+  Penjualan", sheet `Template`). Berkas ketiga, diimpor setelah pelanggan dan faktur:
+  `GET /admin/finance/accurate/penerimaan?from=&to=` (izin `reports.read`).
+  - Isinya transaksi yang **lunas** (`paidAt`) pada rentang itu, termasuk yang fakturnya dibuat lebih
+    awal. Satu penerimaan per faktur, tanpa baris lanjutan multi-faktur.
+  - CUSTOMER NO sama dengan faktur (`WEB.####` / `WEB.0000`). NUMBER = `PP-<nomor invoice>`, jadi impor
+    ulang ditolak Accurate. DATE = tanggal lunas. PAYMENT NUMBER = nomor invoice.
+  - PAYMENT TOTAL = PAYMENT VALUE = total transfer. PAYING BANK selalu `QRIS`. Kolom diskon kosong.
+  - EXPENSE ACCOUNT NO dari setting `accurate_cash_account_no`, diisi di Pembayaran → Pengaturan
+    Pembayaran ("Kode akun Kas/Bank Accurate", maks 30). Bila kosong, export ditolak 422.
 
 ### 7.5 Catatan client 2026-10-01
 

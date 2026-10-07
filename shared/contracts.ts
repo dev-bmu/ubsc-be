@@ -1294,6 +1294,8 @@ export interface PaymentSettingsDto {
   adminFee: number
   /** Batas atas kode unik (1..999). */
   uniqueCodeMax: number
+  /** Kode akun Kas/Bank Accurate untuk export Penerimaan Penjualan; '' = belum diisi. */
+  accurateCashAccountNo: string
 }
 
 /** GET /api/admin/payments?tab= — maks 100 baris, metode manual. */
@@ -1316,6 +1318,8 @@ export interface PaymentSettingsPayload {
   adminFee: number
   /** 100..999. */
   uniqueCodeMax: number
+  /** Maks 30 karakter; '' boleh (export Penerimaan Penjualan lalu ditolak sampai diisi). */
+  accurateCashAccountNo: string
 }
 
 /**

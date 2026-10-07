@@ -17,7 +17,7 @@ const optionalDate = (label: string) =>
   )
 
 export class AccurateExportValidation {
-  /** GET /api/admin/finance/accurate/{pelanggan,faktur}?from=&to= — kosong = hari ini (WIB). */
+  /** GET /api/admin/finance/accurate/{pelanggan,faktur,penerimaan}?from=&to= — kosong = hari ini (WIB). */
   static readonly RANGE = z.object({ from: optionalDate('Tanggal awal'), to: optionalDate('Tanggal akhir') }).superRefine((value, ctx) => {
     if (!value.from || !value.to) return
     if (value.to < value.from) ctx.addIssue({ code: 'custom', path: ['to'], message: 'Tanggal akhir harus sama atau setelah tanggal awal.' })

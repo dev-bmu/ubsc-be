@@ -95,6 +95,11 @@ export async function qrisSetting(): Promise<{ imageUrl: string; merchantName: s
   return imageUrl ? { imageUrl, merchantName: merchantName || null } : null
 }
 
+/** Kode akun Kas/Bank Accurate (kolom EXPENSE ACCOUNT NO export Penerimaan Penjualan); '' = belum diisi. */
+export async function accurateCashAccountNo(): Promise<string> {
+  return (await setting('accurate_cash_account_no', '')).trim()
+}
+
 /** Checkout online hanya dibuka bila pelanggan punya cara membayar: QRIS atau rekening bank. */
 export async function isConfigured(): Promise<boolean> {
   const [account, qris] = await Promise.all([bankAccount(), qrisSetting()])

@@ -1,5 +1,5 @@
 import { RequestHandler, Response } from 'express'
-import { accurateCustomerExport, accurateInvoiceExport } from '../services/accurate-export-services'
+import { accurateCustomerExport, accurateInvoiceExport, accurateReceiptExport } from '../services/accurate-export-services'
 import { getFinanceReport } from '../services/finance-report-services'
 import { ok } from '../utils/respond'
 
@@ -35,6 +35,14 @@ export const accurateCustomers: RequestHandler = async (req, res, next) => {
 export const accurateInvoices: RequestHandler = async (req, res, next) => {
   try {
     sendXlsx(res, await accurateInvoiceExport(req.query))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const accurateReceipts: RequestHandler = async (req, res, next) => {
+  try {
+    sendXlsx(res, await accurateReceiptExport(req.query))
   } catch (error) {
     next(error)
   }

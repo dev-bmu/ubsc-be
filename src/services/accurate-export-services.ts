@@ -7,19 +7,23 @@ import { accurateCustomerId, customerNumber, rupiahPlain, transferTotal } from '
 import { buildXlsx, XlsxCell } from '../utils/xlsx'
 import { AccurateExportValidation } from '../validation/accurate-export-validation'
 import { Validation } from '../validation/Validation'
+import { accurateCashAccountNo } from './manual-payment-services'
 
 // ============================================================================
 // === Export Excel untuk Accurate (PRD tambahan 2026-09, bagian 6; catatan client 2026-09-28) ===
 // ============================================================================
-// Dua berkas per rentang tanggal, mengikuti template impor Accurate dari finance:
+// Tiga berkas per rentang tanggal, mengikuti template impor Accurate dari finance, diimpor berurutan:
 //   1. Pelanggan  — "Template Impor Pelanggan": semua pelanggan yang muncul di faktur rentang itu.
 //                   Diimpor lebih dulu supaya CUSTOMER NO di faktur pasti ada di Accurate.
 //   2. Faktur     — "Template" faktur penjualan: setiap transaksi yang DIBUAT di rentang itu, lunas
-//                   maupun belum (keputusan client). Satu transaksi = satu faktur bernomor kuitansi
-//                   UBSC (mencegah impor ganda, dan jadi rujukan export penerimaan penjualan kelak).
+//                   maupun belum (keputusan client). Satu transaksi = satu faktur bernomor invoice
+//                   UBSC (mencegah impor ganda, dan jadi rujukan PAYMENT NUMBER penerimaan).
 //                   SATU baris item per faktur seharga total transfer (harga + biaya admin + kode
 //                   unik) — client tidak mau biaya admin dan kode unik jadi baris item terpisah.
-// Penerimaan penjualan (yang lunas di hari itu) menyusul — menunggu template impornya dari finance.
+//   3. Penerimaan — "Template" penerimaan penjualan (pelunasan): setiap transaksi yang LUNAS (paidAt)
+//                   di rentang itu, termasuk yang fakturnya dibuat sebelum rentang. Satu penerimaan
+//                   per faktur, nomor `PP-<invoice>` (impor ulang ditolak Accurate), akun Kas/Bank dari
+//                   setting `accurate_cash_account_no`, PAYING BANK selalu QRIS.
 //
 // ID pelanggan Accurate 'WEB.0001' (User.accurateSequence) terbit di sini, saat pelanggan pertama kali
 // masuk export, sehingga counternya hanya berisi pelanggan yang benar-benar punya penjualan.
@@ -74,6 +78,12 @@ const INVOICE_HEADER = [
   'EXPENSE:SALES ORDER NO'
 ]
 
+// prettier-ignore
+const RECEIPT_HEADER = [
+  'CUSTOMER NO', 'NUMBER', 'BRANCH', 'DATE', 'EXPENSE ACCOUNT NO', 'DESCRIPTION', 'PAYMENT TOTAL', 'PAYMENT NUMBER',
+  'PAYMENT VALUE', 'PAYING BANK', 'DISCOUNT ACCOUNT NO', 'TOTAL DISCOUNT'
+]
+
 /** Satu baris template diisi per nama kolom; kolom lain kosong. Nama kolom salah = gagal keras. */
 function templateRow(header: string[], values: Record<string, XlsxCell>): XlsxCell[] {
   const row: XlsxCell[] = new Array(header.length).fill(null)
@@ -92,6 +102,7 @@ const SALE_SELECT = {
   receiptSequence: true,
   invoiceNumber: true,
   createdAt: true,
+  paidAt: true,
   amount: true,
   adminFee: true,
   uniqueCode: true,
@@ -126,16 +137,19 @@ function range(query: unknown): { from: string; to: string } {
   return { from, to: v.to ?? from }
 }
 
-/** Transaksi yang dibuat pada rentang WIB [from, to], lunas maupun belum. Batal/kedaluwarsa dan nominal 0 tidak dijual. */
-function salesIn(from: string, to: string): Promise<SaleRow[]> {
+/**
+ * 'created' = transaksi yang dibuat pada rentang WIB [from, to], lunas maupun belum (faktur, pelanggan).
+ * 'paid' = transaksi yang lunas pada rentang itu (penerimaan). Batal/kedaluwarsa dan nominal 0 tidak dijual.
+ */
+function salesIn(from: string, to: string, by: 'created' | 'paid'): Promise<SaleRow[]> {
+  const window = { gte: jakartaWallTimeToUtc(from, '00:00'), lt: jakartaWallTimeToUtc(addDays(to, 1), '00:00') }
   return prismaClient.transaction.findMany({
     where: {
-      createdAt: { gte: jakartaWallTimeToUtc(from, '00:00'), lt: jakartaWallTimeToUtc(addDays(to, 1), '00:00') },
-      paymentStatus: { in: ['PAID', 'UNPAID'] },
+      ...(by === 'paid' ? { paidAt: window, paymentStatus: 'PAID' } : { createdAt: window, paymentStatus: { in: ['PAID', 'UNPAID'] } }),
       amount: { gt: 0 },
       OR: [{ bookingId: { not: null } }, { membershipId: { not: null } }]
     },
-    orderBy: { receiptSequence: 'asc' },
+    orderBy: by === 'paid' ? [{ paidAt: 'asc' }, { receiptSequence: 'asc' }] : [{ receiptSequence: 'asc' }],
     select: SALE_SELECT
   })
 }
@@ -172,9 +186,9 @@ async function ensureAccurateIds(sales: SaleRow[]): Promise<void> {
   for (const sale of sales) if (sale.user && sale.user.accurateSequence === null) sale.user.accurateSequence = assigned.get(sale.user.id) ?? null
 }
 
-async function loadSales(query: unknown): Promise<{ from: string; to: string; sales: SaleRow[] }> {
+async function loadSales(query: unknown, by: 'created' | 'paid' = 'created'): Promise<{ from: string; to: string; sales: SaleRow[] }> {
   const { from, to } = range(query)
-  const sales = await salesIn(from, to)
+  const sales = await salesIn(from, to, by)
   await ensureAccurateIds(sales)
   return { from, to, sales }
 }
@@ -283,6 +297,37 @@ export async function accurateInvoiceExport(query: unknown): Promise<{ filename:
   })
 
   return { filename: `accurate-faktur-${suffix(from, to)}.xlsx`, buffer: buildXlsx('Template', INVOICE_HEADER, rows) }
+}
+
+// ===== 3. Penerimaan penjualan =====
+
+export async function accurateReceiptExport(query: unknown): Promise<{ filename: string; buffer: Buffer }> {
+  // Akun Kas/Bank wajib di template; tanpa itu Accurate menolak seluruh berkas.
+  const account = await accurateCashAccountNo()
+  if (!account) {
+    const message = 'Kode akun Kas/Bank Accurate belum diisi. Isi di menu Pembayaran > Pengaturan Pembayaran.'
+    throw new ResponseError(422, message, 'VALIDATION_ERROR', { accurateCashAccountNo: [message] })
+  }
+  const { from, to, sales } = await loadSales(query, 'paid')
+
+  // Satu penerimaan per faktur (tanpa baris lanjutan multi-faktur). Total dibayar = total transfer faktur.
+  const rows = sales.map((sale) => {
+    const total = transferTotal(sale)
+    return templateRow(RECEIPT_HEADER, {
+      'CUSTOMER NO': customerIdOf(sale),
+      NUMBER: `PP-${sale.invoiceNumber}`,
+      BRANCH: ACCURATE_BRANCH,
+      DATE: { date: jakartaDate(sale.paidAt as Date) },
+      'EXPENSE ACCOUNT NO': account,
+      DESCRIPTION: `Pelunasan ${sale.invoiceNumber} - ${mainItem(sale).name} - ${customerNameOf(sale)}`,
+      'PAYMENT TOTAL': total,
+      'PAYMENT NUMBER': sale.invoiceNumber,
+      'PAYMENT VALUE': total,
+      'PAYING BANK': 'QRIS'
+    })
+  })
+
+  return { filename: `accurate-penerimaan-${suffix(from, to)}.xlsx`, buffer: buildXlsx('Template', RECEIPT_HEADER, rows) }
 }
 
 function suffix(from: string, to: string): string {

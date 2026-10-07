@@ -1,8 +1,9 @@
+import { Prisma } from '@prisma/client'
 import request from 'supertest'
 import { inflateRawSync } from 'zlib'
 import { prismaClient } from '../src/application/database'
 import { web } from '../src/application/web'
-import { accurateCustomerExport, accurateInvoiceExport, ACCURATE_BRANCH } from '../src/services/accurate-export-services'
+import { accurateCustomerExport, accurateInvoiceExport, accurateReceiptExport, ACCURATE_BRANCH } from '../src/services/accurate-export-services'
 import { createMembership } from '../src/services/membership-services'
 import { createCustomerAccount } from '../src/services/membership-admin-services'
 import {
@@ -12,8 +13,8 @@ import {
   resetPasswordAuth,
   verifyEmailAuth
 } from '../src/services/registration-services'
-import { addDays, jakartaDate, setNowForTests } from '../src/utils/clock'
-import { customerNumber } from '../src/utils/money'
+import { addDays, jakartaDate, jakartaWallTimeToUtc, setNowForTests } from '../src/utils/clock'
+import { accurateCustomerId, customerNumber } from '../src/utils/money'
 import { createRefreshToken, hashToken } from '../src/utils/token'
 import { bearer, closeDatabase, createCustomer, createStaff, FROZEN_NOW, resetDatabase } from './helpers/fixtures'
 
@@ -158,6 +159,123 @@ describe('export Accurate', () => {
     await expect(accurateInvoiceExport({ from: day, to: addDays(day, 31) })).rejects.toMatchObject({
       issues: [expect.objectContaining({ path: ['to'], message: 'Rentang export maksimal 31 hari.' })]
     })
+  })
+})
+
+describe('penerimaan penjualan', () => {
+  const ACCOUNT = '1101-001'
+
+  it('kode akun Kas/Bank wajib: export ditolak sampai diisi di Pengaturan Pembayaran, nilainya tersimpan bolak-balik', async () => {
+    await expect(accurateReceiptExport({ from: day })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining('Pembayaran > Pengaturan Pembayaran')
+    })
+
+    const finance = bearer(await createStaff('Finance'), 'staff')
+    const settings = { bankName: '', accountNumber: '', accountHolder: '', qrisMerchantName: '', holdMinutes: 120, adminFee: 500, uniqueCodeMax: 500 }
+    const post = (accurateCashAccountNo: string) =>
+      request(web)
+        .post('/api/admin/payments/settings')
+        .set('Authorization', finance)
+        .send({ ...settings, accurateCashAccountNo })
+    await post('9'.repeat(31)).expect(400)
+    expect((await post(` ${ACCOUNT} `).expect(200)).body.data.accurateCashAccountNo).toBe(ACCOUNT)
+    expect((await request(web).get('/api/admin/payments').set('Authorization', finance).expect(200)).body.data.accurateCashAccountNo).toBe(ACCOUNT)
+  })
+
+  it('satu penerimaan per transaksi yang LUNAS di rentang itu, termasuk faktur yang dibuat sebelumnya', async () => {
+    // Rentang di depan hari transaksi dibuat: semua faktur di bawah dibuat SEBELUM rentang ini.
+    const range = addDays(day, 5)
+    const at = (date: string, hm: string) => jakartaWallTimeToUtc(date, hm)
+    const pay = (membershipId: string, paidAt: Date, data: Prisma.TransactionUpdateInput = {}) =>
+      prismaClient.transaction.update({ where: { membershipId }, data: { paymentStatus: 'PAID', pendingTotal: null, paidAt, ...data } })
+    const payPlan = async (paidAt: Date) =>
+      pay((await createMembership({ userId: (await createCustomer()).id, membershipPlanId: planId, startDate: '2026-10-05' })).id, paidAt)
+
+    // Batas awal/akhir hari WIB ikut (bukan tengah malam UTC = 07:00 WIB).
+    const first = await payPlan(at(range, '00:00'))
+    const last = await payPlan(at(range, '23:59'))
+    const owner = await createCustomer()
+    const earlier = await pay(
+      (await createMembership({ userId: owner.id, membershipPlanId: planId, startDate: '2026-10-05' })).id,
+      at(range, '09:00')
+    )
+    const walkIn = await pay(
+      (await createMembership({ customerName: 'Bu Sari', startDate: '2026-10-05', endDate: '2026-11-05', amount: 150_000 })).id,
+      at(range, '10:00'),
+      { createdAt: at(range, '08:00') }
+    )
+    // Tidak ikut: belum lunas, kedaluwarsa, nominal 0, lunas sesaat sebelum rentang dimulai / tepat setelah rentang berakhir.
+    await createMembership({ userId: (await createCustomer()).id, membershipPlanId: planId, startDate: '2026-10-05' })
+    await pay(
+      (await createMembership({ userId: (await createCustomer()).id, membershipPlanId: planId, startDate: '2026-10-05' })).id,
+      at(range, '11:00'),
+      {
+        paymentStatus: 'EXPIRED'
+      }
+    )
+    await pay(
+      (await createMembership({ userId: (await createCustomer()).id, startDate: '2026-10-05', endDate: '2026-10-06', amount: 0 })).id,
+      at(range, '11:00')
+    )
+    await payPlan(at(addDays(range, -1), '23:59'))
+    await payPlan(at(addDays(range, 1), '00:00'))
+
+    const file = await accurateReceiptExport({ from: range, to: range })
+    expect(file.filename).toBe(`accurate-penerimaan-${range}.xlsx`)
+    const sheet = readSheet(file.buffer)
+    expect(Array.from('ABCDEFGHIJKL', (column) => sheet[`${column}1`])).toEqual([
+      'CUSTOMER NO',
+      'NUMBER',
+      'BRANCH',
+      'DATE',
+      'EXPENSE ACCOUNT NO',
+      'DESCRIPTION',
+      'PAYMENT TOTAL',
+      'PAYMENT NUMBER',
+      'PAYMENT VALUE',
+      'PAYING BANK',
+      'DISCOUNT ACCOUNT NO',
+      'TOTAL DISCOUNT'
+    ])
+
+    const [y, m, d] = range.split('-').map(Number)
+    const total = (t: { amount: number; adminFee: number; uniqueCode: number | null }) => String(t.amount + t.adminFee + (t.uniqueCode ?? 0))
+    const { accurateSequence } = await prismaClient.user.findUniqueOrThrow({ where: { id: owner.id } })
+    // Urut tanggal lunas, hanya yang lunas di [from 00:00 WIB, to+1 00:00 WIB).
+    expect(Array.from({ length: 5 }, (_, i) => sheet[`H${i + 2}`])).toEqual([
+      first.invoiceNumber,
+      earlier.invoiceNumber,
+      walkIn.invoiceNumber,
+      last.invoiceNumber,
+      undefined
+    ])
+    // CUSTOMER NO sama dengan faktur (WEB.####, walk-in WEB.0000).
+    expect(sheet).toMatchObject({
+      A3: accurateCustomerId(accurateSequence as number),
+      B3: `PP-${earlier.invoiceNumber}`,
+      C3: ACCURATE_BRANCH,
+      D3: String((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86_400_000), // tanggal lunas
+      E3: ACCOUNT,
+      G3: total(earlier),
+      I3: total(earlier),
+      J3: 'QRIS'
+    })
+    expect(sheet.F3).toBe(`Pelunasan ${earlier.invoiceNumber} - Membership Gym Accurate - ${owner.name}`)
+    expect(sheet.K3).toBeUndefined()
+    expect(sheet.L3).toBeUndefined()
+    expect(sheet).toMatchObject({ A4: 'WEB.0000', B4: `PP-${walkIn.invoiceNumber}`, G4: total(walkIn), I4: total(walkIn) })
+    expect(sheet.F4).toContain('Bu Sari')
+    // Tanggal lunas 00:00 / 23:59 WIB tetap hari `range`, bukan sehari sebelum/sesudahnya.
+    expect([sheet.D2, sheet.D5]).toEqual([sheet.D3, sheet.D3])
+    expect(sheet.A6).toBeUndefined()
+
+    const download = await request(web)
+      .get('/api/admin/finance/accurate/penerimaan')
+      .query({ from: range })
+      .set('Authorization', bearer(await createStaff('Finance'), 'staff'))
+      .expect(200)
+    expect(download.headers['content-disposition']).toBe(`attachment; filename="accurate-penerimaan-${range}.xlsx"`)
   })
 })
 
