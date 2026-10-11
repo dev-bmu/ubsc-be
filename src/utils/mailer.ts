@@ -80,7 +80,8 @@ function getTransporter(): Transporter {
 }
 
 function fromAddress(): string {
-  const address = MAIL_FROM_ADDRESS || MAIL_USER || 'no-reply@ubsportcenter.co.id'
+  // MAIL_USER hanya dipakai sebagai pengirim bila memang alamat email: di Resend user SMTP-nya 'resend'.
+  const address = MAIL_FROM_ADDRESS || (MAIL_USER?.includes('@') ? MAIL_USER : '') || 'no-reply@ubsportcenter.co.id'
   return `"${MAIL_FROM_NAME}" <${address}>`
 }
 

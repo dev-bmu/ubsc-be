@@ -151,7 +151,9 @@ ikut git): salin isinya ke `/var/www/ubsc/be/.env`, lalu ganti semua `<...>`.
 | `COOKIE_DOMAIN`                             | kosong (cookie host-only memisahkan sesi landing dan admin — jangan isi `.ubsportcenter.co.id`)                                                          |
 | `MAIL_TRANSPORT`                            | `smtp`                                                                                                                                                   |
 | `MAIL_PORT` / `MAIL_SECURE`                 | `465` / `true`; bila VPS memblokir 465 pakai `587` / `false` (STARTTLS wajib otomatis)                                                                   |
-| `MAIL_PASSWORD`                             | password mailbox `no-reply@ubsportcenter.co.id`                                                                                                          |
+| `MAIL_HOST` / `MAIL_USER`                   | `smtp.resend.com` / `resend` (Resend SMTP)                                                                                                               |
+| `MAIL_PASSWORD`                             | API key Resend (`re_...`)                                                                                                                                |
+| `MAIL_FROM_ADDRESS`                         | alamat di domain terverifikasi Resend, mis. `no-reply@ubsportcenter.co.id` (wajib diisi: user SMTP Resend bukan alamat email)                         |
 | `GOOGLE_REDIRECT_URI`                       | `https://ubsportcenter.co.id/api/auth/customer/google/callback` — daftarkan juga di Google Console                                                       |
 | `LANDING_REVALIDATE_URL`                    | `http://127.0.0.1:3737/revalidate` (langsung ke port Next, bukan lewat nginx)                                                                            |
 | `LANDING_REVALIDATE_SECRET`                 | `openssl rand -hex 32` — samakan dengan `REVALIDATE_SECRET` landing                                                                                      |
