@@ -116,7 +116,7 @@ describe('export Accurate', () => {
       const t = await transactionOf(membershipId)
       return String(t.amount + t.adminFee + (t.uniqueCode ?? 0))
     }
-    // Satu baris per faktur seharga total transfer (harga + admin + kode unik), tanpa baris terpisah.
+    // Satu baris per faktur seharga total transfer (harga + kode unik), tanpa baris terpisah.
     expect(sheet).toMatchObject({
       A2: 'WEB.0002',
       B2: t2.invoiceNumber,
@@ -127,6 +127,8 @@ describe('export Accurate', () => {
       AW2: await totalOf(second.id)
     })
     expect(sheet.BC2).toContain(`kode unik Rp ${t2.uniqueCode}`)
+    // Tanpa biaya admin (2026-10-08): rinciannya tidak menyebut admin.
+    expect(sheet.BC2).not.toContain('admin')
     expect(sheet.L2).toContain('(belum lunas)')
     expect(sheet).toMatchObject({ A3: 'WEB.0001', AW3: await totalOf(first.id) })
     // Walk-in tanpa paket: pelanggan umum + item membership umum.
@@ -172,7 +174,7 @@ describe('penerimaan penjualan', () => {
     })
 
     const finance = bearer(await createStaff('Finance'), 'staff')
-    const settings = { bankName: '', accountNumber: '', accountHolder: '', qrisMerchantName: '', holdMinutes: 120, adminFee: 500, uniqueCodeMax: 500 }
+    const settings = { bankName: '', accountNumber: '', accountHolder: '', qrisMerchantName: '', holdMinutes: 120, uniqueCodeMax: 999 }
     const post = (accurateCashAccountNo: string) =>
       request(web)
         .post('/api/admin/payments/settings')

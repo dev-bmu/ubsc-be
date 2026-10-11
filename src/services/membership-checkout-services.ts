@@ -7,7 +7,7 @@ import type { UserWithRelations } from '../type/user-request'
 import { addDays, addMinutes, dateOnlyToString, jakartaDate, now } from '../utils/clock'
 import { MembershipCheckoutValidation } from '../validation/membership-checkout-validation'
 import { Validation } from '../validation/Validation'
-import { adminFee, attachProof, bankAccount, holdMinutes, isConfigured, qrisSetting, uniqueCodeMax } from './manual-payment-services'
+import { attachProof, bankAccount, CODE_MIN, holdMinutes, isConfigured, qrisSetting, uniqueCodeMax } from './manual-payment-services'
 import { currentActiveMembership, openMembershipCheckout } from './membership-services'
 import { deletePrivateFile, storePaymentProof } from './payment-proof-services'
 import { presentTransferPayment, UploadedFile } from './payment-services'
@@ -74,8 +74,7 @@ function assertMemberPhoto(user: UserWithRelations): void {
 export async function membershipCheckoutPreview(user: UserWithRelations, planId: string): Promise<MembershipCheckoutPreviewDto> {
   const plan = await activePlan(planId)
   const category = priceCategoryFor(user)
-  const [fee, codeMax, current, pending] = await Promise.all([
-    adminFee(),
+  const [codeMax, current, pending] = await Promise.all([
     uniqueCodeMax(),
     currentActiveMembership(prismaClient, user.id),
     pendingMembershipOf(user.id)
@@ -86,8 +85,9 @@ export async function membershipCheckoutPreview(user: UserWithRelations, planId:
     amount: membershipPriceFor(plan, category),
     priceCategory: category,
     identityStatus: user.identityStatus,
-    adminFee: fee,
+    uniqueCodeMin: CODE_MIN,
     uniqueCodeMax: codeMax,
+    adminFee: 0,
     startsAfterCurrent: current ? addDays(dateOnlyToString(current.endDate), 1) : null,
     activeUntil: current ? dateOnlyToString(current.endDate) : null,
     renewalOpensOn: renewalOpensOn(current),

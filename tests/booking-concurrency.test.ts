@@ -1,7 +1,7 @@
 import { prismaClient } from '../src/application/database'
 import { ResponseError } from '../src/error/response-error'
 import { createBooking } from '../src/services/booking-services'
-import { DEFAULT_ADMIN_FEE, DEFAULT_UNIQUE_CODE_MAX } from '../src/services/manual-payment-services'
+import { CODE_MIN, DEFAULT_UNIQUE_CODE_MAX } from '../src/services/manual-payment-services'
 import { setNowForTests } from '../src/utils/clock'
 import {
   closeDatabase,
@@ -183,16 +183,15 @@ describe('balapan pada slot terakhir', () => {
 describe('kode unik pendingTotal di bawah balapan (R11)', () => {
   it('sembilan checkout bersamaan berebut sembilan kode tersisa: semua lolos dengan total berbeda, yang kesepuluh gagal bersih', async () => {
     const amount = 777_000
-    // Nominal dasar = harga + biaya admin. Isi semua kode kecuali sembilan — tabrakan di UNIQUE index
-    // menjadi pasti, bukan kebetulan.
-    const base = amount + DEFAULT_ADMIN_FEE
-    const prefilled = DEFAULT_UNIQUE_CODE_MAX - 9
+    // Nominal dasar = harga (tanpa biaya admin sejak 2026-10-08). Isi semua kode 501..999 kecuali
+    // sembilan — tabrakan di UNIQUE index menjadi pasti, bukan kebetulan.
+    const base = amount
+    const prefilled = DEFAULT_UNIQUE_CODE_MAX - CODE_MIN + 1 - 9
     await prismaClient.transaction.createMany({
       data: Array.from({ length: prefilled }, (_, i) => ({
         amount,
-        adminFee: DEFAULT_ADMIN_FEE,
-        uniqueCode: i + 1,
-        pendingTotal: base + i + 1,
+        uniqueCode: CODE_MIN + i,
+        pendingTotal: base + CODE_MIN + i,
         invoiceNumber: `PREFILL-${i + 1}`,
         paymentStatus: 'UNPAID' as const
       }))
@@ -214,7 +213,7 @@ describe('kode unik pendingTotal di bawah balapan (R11)', () => {
     const codes = totals.map((t) => (t.pendingTotal as number) - base)
     expect(new Set(codes).size).toBe(9)
     codes.forEach((code) => {
-      expect(code).toBeGreaterThan(prefilled)
+      expect(code).toBeGreaterThanOrEqual(CODE_MIN + prefilled)
       expect(code).toBeLessThanOrEqual(DEFAULT_UNIQUE_CODE_MAX)
     })
 

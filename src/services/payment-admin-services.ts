@@ -12,7 +12,7 @@ import { paginationMeta } from '../utils/respond'
 import { deleteObjects, ownedPublicKey, publicUrl, putObject } from '../utils/storage'
 import { PaymentValidation } from '../validation/payment-validation'
 import { Validation } from '../validation/Validation'
-import { accurateCashAccountNo, adminFee, bankAccount, holdMinutes, qrisSetting, uniqueCodeMax } from './manual-payment-services'
+import { accurateCashAccountNo, bankAccount, holdMinutes, qrisSetting, uniqueCodeMax } from './manual-payment-services'
 
 // ============================================================================
 // === Antrean verifikasi + pengaturan rekening — port Admin\PaymentVerificationController ===
@@ -185,25 +185,24 @@ export async function listPaymentQueue(query: unknown): Promise<{ data: AdminPay
 
 /** Keadaan pengaturan, dibaca lewat helper yang sama dengan jalur pelanggan. */
 async function paymentSettings(): Promise<PaymentSettingsDto> {
-  const [bank, qris, hold, fee, codeMax, cashAccount] = await Promise.all([
+  const [bank, qris, hold, codeMax, cashAccount] = await Promise.all([
     bankAccount(),
     qrisSetting(),
     holdMinutes(),
-    adminFee(),
     uniqueCodeMax(),
     accurateCashAccountNo()
   ])
-  return { bank, qris, holdMinutes: hold, adminFee: fee, uniqueCodeMax: codeMax, accurateCashAccountNo: cashAccount }
+  return { bank, qris, holdMinutes: hold, uniqueCodeMax: codeMax, accurateCashAccountNo: cashAccount }
 }
 
-// ===== 2. Pengaturan rekening, durasi hold, biaya admin, kode unik =====
+// ===== 2. Pengaturan rekening, durasi hold, kode unik =====
 
 /**
  * Laravel membalas redirect back() + flash; di sini dibalas keadaan tersimpan (dibaca ulang lewat helper
  * yang sama dengan index) supaya panel bisa langsung memperbarui kartu rekening tanpa refetch.
  *
- * Mengubah biaya admin tidak menyentuh transfer yang sudah terbuka: nominalnya disalin ke
- * transactions.adminFee saat dibuka.
+ * Biaya admin dihapus (revisi client 2026-10-08): setting payment_admin_fee tidak lagi dibaca/ditulis;
+ * barisnya dibiarkan, tidak berpengaruh apa pun.
  */
 export async function updatePaymentSettings(request: unknown): Promise<PaymentSettingsDto> {
   const v = Validation.validate(PaymentValidation.SETTINGS, request)
@@ -215,7 +214,6 @@ export async function updatePaymentSettings(request: unknown): Promise<PaymentSe
     ['payment_bank_account_holder', v.accountHolder],
     ['payment_qris_merchant', v.qrisMerchantName],
     ['payment_hold_minutes', String(v.holdMinutes)],
-    ['payment_admin_fee', String(v.adminFee)],
     ['payment_unique_code_max', String(v.uniqueCodeMax)],
     ['accurate_cash_account_no', v.accurateCashAccountNo]
   ]
@@ -229,7 +227,7 @@ export async function updatePaymentSettings(request: unknown): Promise<PaymentSe
 
 // ===== 3. Gambar QRIS merchant =====
 // Keputusan client 2026-10-01: pembayaran lewat QRIS statis — pelanggan memindai gambar QRIS merchant
-// lalu mengetik nominal (harga + biaya admin + kode unik) sendiri. Gambarnya publik (halaman bayar,
+// lalu mengetik nominal (harga + kode unik) sendiri. Gambarnya publik (halaman bayar,
 // invoice, email), jadi tinggal di area public 'qris/' (utils/storage.ts), bernama acak. Encode ulang ke PNG LOSSLESS: kompresi lossy
 // bisa mengaburkan modul QR kecil sampai tidak terbaca.
 

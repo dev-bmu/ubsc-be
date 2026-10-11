@@ -41,17 +41,21 @@ type Db = Prisma.TransactionClient
 /** Pembaca setting: klien biasa, atau klien transaksi supaya dibaca di koneksi yang sama. */
 type SettingsDb = Pick<Prisma.TransactionClient, 'systemSetting'>
 
-/** Kode 0 tidak bisa dibedakan dari "tanpa kode". */
-const CODE_MIN = 1
+/** Revisi client 2026-10-08: kode unik selalu LEBIH dari 500 (tiga digit terakhir 501..999). */
+export const CODE_MIN = 501
 /** Kode ditambahkan ke harga, jadi batas atasnya di bawah 1000. */
 export const CODE_MAX_LIMIT = 999
+/** Batas atas terkecil yang boleh disetel — minimal 100 kode per nominal. */
+export const CODE_MAX_FLOOR = 600
 /** Batas percobaan alokasi kode (R11) — setelah itu gagal bersih, tidak berputar. */
 const CODE_ATTEMPTS = 25
 
 export const DEFAULT_HOLD_MINUTES = 120
-/** Catatan client 2026-09: biaya admin Rp500 + kode unik maksimal 500 — tambahan paling banyak Rp1.000. */
-export const DEFAULT_ADMIN_FEE = 500
-export const DEFAULT_UNIQUE_CODE_MAX = 500
+/**
+ * Revisi client 2026-10-08: biaya admin DIHAPUS (transaksi baru selalu adminFee 0; kolomnya tetap untuk
+ * transaksi lama) dan kode unik 501..999.
+ */
+export const DEFAULT_UNIQUE_CODE_MAX = 999
 
 // ===== Pengaturan =====
 
@@ -65,16 +69,13 @@ export async function holdMinutes(): Promise<number> {
   return configured > 0 ? configured : DEFAULT_HOLD_MINUTES
 }
 
-/** Rupiah per transaksi; 0 = biaya admin dimatikan. */
-export async function adminFee(db?: SettingsDb): Promise<number> {
-  const configured = Math.trunc(Number(await setting('payment_admin_fee', String(DEFAULT_ADMIN_FEE), db)))
-  return configured >= 0 ? configured : DEFAULT_ADMIN_FEE
-}
-
-/** Batas atas kode unik. Kapasitas transfer terbuka bersamaan per nominal = nilai ini. */
+/**
+ * Batas atas kode unik. Kapasitas transfer terbuka bersamaan per nominal = nilai ini - 500. Nilai
+ * tersimpan di luar 600..999 (mis. 500 dari aturan lama — menyisakan nol kode) jatuh ke default.
+ */
 export async function uniqueCodeMax(db?: SettingsDb): Promise<number> {
   const configured = Math.trunc(Number(await setting('payment_unique_code_max', String(DEFAULT_UNIQUE_CODE_MAX), db)))
-  return configured >= CODE_MIN && configured <= CODE_MAX_LIMIT ? configured : DEFAULT_UNIQUE_CODE_MAX
+  return configured >= CODE_MAX_FLOOR && configured <= CODE_MAX_LIMIT ? configured : DEFAULT_UNIQUE_CODE_MAX
 }
 
 export async function bankAccount(): Promise<{ bank: string; accountNumber: string; accountHolder: string }> {
@@ -203,8 +204,9 @@ export interface TransferSubject {
 }
 
 /**
- * Buka transfer untuk subject senilai `amount` rupiah. Pelanggan mentransfer
- * amount + biaya admin + kode unik; biaya admin satu kali per transaksi, jadi paket N sesi tetap satu.
+ * Buka transfer untuk subject senilai `amount` rupiah. Pelanggan mentransfer amount + kode unik
+ * (501..uniqueCodeMax), satu kode per transaksi — paket N sesi tetap satu. Tanpa biaya admin sejak
+ * revisi client 2026-10-08: adminFee selalu 0 (transaksi lama tetap membawa biayanya).
  *
  * WAJIB dipanggil di dalam transaksi yang sudah memegang kunci yang dibutuhkan pemanggil; fungsi ini
  * hanya menambahkan alokasi kode.
@@ -226,13 +228,11 @@ export async function openTransfer(
     throw new Error('openTransfer butuh tepat satu dari bookingId / membershipId')
   }
 
-  const fee = await adminFee(tx)
-  const base = amount + fee
   const number = await allocateInvoiceNumber(tx)
 
   // Coba-insert, bukan pre-check: request lain bisa mengambil kode di antara baca dan tulis kita,
   // dan UNIQUE index-lah yang memutuskan.
-  for (const code of await candidateCodes(tx, base, await uniqueCodeMax(tx))) {
+  for (const code of await candidateCodes(tx, amount, await uniqueCodeMax(tx))) {
     try {
       return await tx.transaction.create({
         data: {
@@ -241,10 +241,10 @@ export async function openTransfer(
           bookingId: subject.bookingId ?? null,
           membershipId: subject.membershipId ?? null,
           amount,
-          adminFee: fee,
+          adminFee: 0,
           method: 'manual',
           uniqueCode: code,
-          pendingTotal: base + code,
+          pendingTotal: amount + code,
           paymentStatus: 'UNPAID',
           expiresAt,
           priceCategory
@@ -259,8 +259,8 @@ export async function openTransfer(
 }
 
 /**
- * Transaksi bernominal 0 (booking gratis walk-in, membership gratis): langsung lunas, tanpa biaya admin
- * dan tanpa kode unik — tidak ada yang ditransfer. Yang bernominal selalu lewat openTransfer + lunas
+ * Transaksi bernominal 0 (booking gratis walk-in, membership gratis): langsung lunas, tanpa kode unik —
+ * tidak ada yang ditransfer. Yang bernominal selalu lewat openTransfer + lunas
  * belakangan (approve), termasuk membership meja depan sejak 2026-09-28.
  */
 export async function recordFreeTransaction(tx: Db, subject: TransferSubject, userId: string | null) {
@@ -330,7 +330,7 @@ export async function attachProof(transactionId: string, storedPath: string): Pr
 export interface PaymentDecision {
   transactionId: string
   invoiceNumber: string
-  /** Harga + biaya admin + kode unik — nominal yang ditransfer pelanggan. */
+  /** transferTotal(): harga + kode unik (+ biaya admin transaksi lama) — nominal yang ditransfer pelanggan. */
   total: number
   rejectionReason: string | null
   customer: { email: string | null; name: string | null }

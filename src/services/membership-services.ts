@@ -11,7 +11,7 @@ import { membershipPriceFor, membershipTariffCategory, priceCategoryFor } from '
 // ============================================================================
 // === MembershipLifecycleService — port dari app/Services ===
 // ============================================================================
-// Membership meja depan dibuat pending_payment dengan transfer terbuka (harga + biaya admin + kode unik)
+// Membership meja depan dibuat pending_payment dengan transfer terbuka (harga + kode unik)
 // sejak catatan client 2026-09-28: sebelumnya langsung PAID, sehingga pelanggan tidak tahu harus
 // membayar berapa dan FO tidak punya jejak apakah uangnya sudah masuk. Invoice-nya tampil di layar FO,
 // dashboard pelanggan, dan email; FO menekan "Tandai Lunas" setelah mutasi cocok, atau pelanggan
@@ -234,7 +234,7 @@ export interface MembershipCheckoutInput {
   userId: string
   customerName: string
   plan: { id: string; durationMonths: number }
-  /** Harga sesuai kategori pembeli (membershipPriceFor), belum termasuk biaya admin dan kode unik. */
+  /** Harga sesuai kategori pembeli (membershipPriceFor), belum termasuk kode unik. */
   amount: number
   /** Tarif yang menghasilkan amount (membershipTariffCategory) — nomor item Accurate. */
   priceCategory: UserCategory

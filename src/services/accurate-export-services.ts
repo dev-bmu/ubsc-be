@@ -18,8 +18,9 @@ import { accurateCashAccountNo } from './manual-payment-services'
 //   2. Faktur     — "Template" faktur penjualan: setiap transaksi yang DIBUAT di rentang itu, lunas
 //                   maupun belum (keputusan client). Satu transaksi = satu faktur bernomor invoice
 //                   UBSC (mencegah impor ganda, dan jadi rujukan PAYMENT NUMBER penerimaan).
-//                   SATU baris item per faktur seharga total transfer (harga + biaya admin + kode
-//                   unik) — client tidak mau biaya admin dan kode unik jadi baris item terpisah.
+//                   SATU baris item per faktur seharga total transfer (harga + kode unik, + biaya
+//                   admin pada transaksi sebelum 2026-10-08) — client tidak mau keduanya jadi baris
+//                   item terpisah.
 //   3. Penerimaan — "Template" penerimaan penjualan (pelunasan): setiap transaksi yang LUNAS (paidAt)
 //                   di rentang itu, termasuk yang fakturnya dibuat sebelum rentang. Satu penerimaan
 //                   per faktur, nomor `PP-<invoice>` (impor ulang ditolak Accurate), akun Kas/Bank dari
@@ -279,8 +280,10 @@ export async function accurateInvoiceExport(query: unknown): Promise<{ filename:
   const rows = sales.map((sale) => {
     const item = mainItem(sale)
     const unpaid = sale.paymentStatus !== 'PAID'
-    // Rincian total tetap tercatat di catatan item supaya finance bisa menelusurinya.
-    const breakdown = `Harga ${rupiahPlain(sale.amount)} + admin ${rupiahPlain(sale.adminFee)} + kode unik ${rupiahPlain(sale.uniqueCode ?? 0)}`
+    // Rincian total tetap tercatat di catatan item supaya finance bisa menelusurinya. 'admin' hanya
+    // untuk transaksi lama yang masih membawa biaya admin (dihapus 2026-10-08).
+    const admin = sale.adminFee > 0 ? ` + admin ${rupiahPlain(sale.adminFee)}` : ''
+    const breakdown = `Harga ${rupiahPlain(sale.amount)}${admin} + kode unik ${rupiahPlain(sale.uniqueCode ?? 0)}`
     return templateRow(INVOICE_HEADER, {
       'CUSTOMER NO': customerIdOf(sale),
       NUMBER: sale.invoiceNumber,
@@ -289,7 +292,7 @@ export async function accurateInvoiceExport(query: unknown): Promise<{ filename:
       DESCRIPTION: `${item.name} - ${customerNameOf(sale)}${unpaid ? ' (belum lunas)' : ''}`,
       'ITEM:ITEM NO': item.itemNo,
       'ITEM:QUANTITY': 1,
-      // Satu baris seharga total transfer — biaya admin dan kode unik tidak dipisah (keputusan client).
+      // Satu baris seharga total transfer — kode unik (dan biaya admin lama) tidak dipisah (keputusan client).
       'ITEM:UNITPRICE': transferTotal(sale),
       'ITEM:NAME': item.name,
       'ITEM:ITEM NOTES': `${item.notes} · ${breakdown}`

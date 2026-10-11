@@ -633,6 +633,7 @@ export async function bookingHistory(userId: string): Promise<BookingHistoryItem
       paymentStatus: t?.paymentStatus ?? 'UNPAID',
       verificationStatus: t?.verificationStatus ?? null,
       transferTotal: t ? transferTotal(t) : lead.subtotalPrice,
+      adminFee: t?.adminFee ?? 0,
       hasPayment: t !== null,
       holdExpiresAt: lead.holdExpiresAt?.toISOString() ?? null,
       hasTicket: t?.paymentStatus === 'PAID' && (lead.status === 'confirmed' || lead.status === 'completed'),

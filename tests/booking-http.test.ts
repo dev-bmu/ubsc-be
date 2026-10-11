@@ -89,8 +89,9 @@ describe('pelanggan', () => {
       ticket: null
     })
     const { adminFee, uniqueCode, total, receiptNumber } = payment.body.data.payment
-    expect(adminFee).toBe(500)
-    expect(total).toBe(250_000 + adminFee + uniqueCode)
+    expect(adminFee).toBe(0)
+    expect(uniqueCode).toBeGreaterThan(500)
+    expect(total).toBe(250_000 + uniqueCode)
     expect(receiptNumber).toMatch(/^UBSC-X-2026-\d{4}$/)
 
     // 3. Unggah bukti.
@@ -306,7 +307,7 @@ describe('checkout membership lewat HTTP (tahap C)', () => {
       .expect(200)
 
     const preview = await request(web).get(`/api/customer/memberships/checkout/${plan.id}`).set('Authorization', auth).expect(200)
-    expect(preview.body.data).toMatchObject({ amount: 150_000, adminFee: 500, pendingMembershipId: null })
+    expect(preview.body.data).toMatchObject({ amount: 150_000, uniqueCodeMin: 501, uniqueCodeMax: 999, adminFee: 0, pendingMembershipId: null })
 
     const created = await request(web).post('/api/customer/memberships').set('Authorization', auth).send({ membershipPlanId: plan.id }).expect(201)
     const { membershipId } = created.body.data
@@ -315,7 +316,7 @@ describe('checkout membership lewat HTTP (tahap C)', () => {
     const detail = await request(web).get(`/api/customer/memberships/${membershipId}/pembayaran`).set('Authorization', auth).expect(200)
     expect(detail.body.data).toMatchObject({
       membership: { id: membershipId, status: 'pending_payment', planName: 'Gym HTTP' },
-      payment: { amount: 150_000, adminFee: 500, canUpload: true },
+      payment: { amount: 150_000, adminFee: 0, canUpload: true },
       bank: { bank: 'BCA' }
     })
     await request(web)
@@ -333,7 +334,7 @@ describe('checkout membership lewat HTTP (tahap C)', () => {
     const finance = bearer(await createStaff('Finance'), 'staff')
     const queue = await request(web).get('/api/admin/payments?tab=awaiting').set('Authorization', finance).expect(200)
     const row = queue.body.data.transactions.find((item: { subject: { plan?: string } }) => item.subject.plan === 'Gym HTTP')
-    expect(row).toMatchObject({ type: 'membership', total: 150_000 + 500 + uploaded.body.data.payment.uniqueCode })
+    expect(row).toMatchObject({ type: 'membership', total: 150_000 + uploaded.body.data.payment.uniqueCode })
 
     // Disetujui: membership aktif, dan email yang terkirim adalah kartu member, bukan "reservasi terkonfirmasi".
     await request(web).post(`/api/admin/payments/${row.id}/approve`).set('Authorization', finance).expect(200)

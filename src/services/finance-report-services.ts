@@ -23,7 +23,8 @@ import { transferTotal } from '../utils/money'
 // dan ledger memakai transferTotal() = harga + biaya admin + kode unik — uang yang benar-benar masuk
 // rekening, sama dengan yang kelak diekspor ke Accurate. Rincian per fasilitas / per paket dan pendapatan
 // reservasi / membership tetap `amount` supaya cocok dengan daftar harga; biaya admin dan kode unik
-// punya barisnya sendiri, sehingga keempatnya berjumlah total pendapatan.
+// punya barisnya sendiri, sehingga keempatnya berjumlah total pendapatan. Biaya admin dihapus 2026-10-08:
+// transaksi baru adminFee 0, jadi barisnya hanya berisi transaksi lama.
 
 const BREAKDOWN_COLORS = ['#E35336', '#0EA5E9', '#10B981', '#A855F7', '#F59E0B', '#64748B']
 
@@ -125,7 +126,8 @@ function groupByName(rows: Array<{ name: string | null; amount: number }>, fallb
 
 /**
  * typeBreakdown(): Reservasi dan Membership (baris tetap Laravel) + Biaya Admin dan Kode Unik, share
- * terhadap total pendapatan (min 1). Keempatnya berjumlah total pendapatan.
+ * terhadap total pendapatan (min 1). Semuanya berjumlah total pendapatan. Baris Biaya Admin hanya bila
+ * periodenya memuat transaksi lama yang masih membawa biaya admin (dihapus 2026-10-08).
  */
 function typeBreakdown(stats: FinanceStatsDto): FinanceTypeBreakdownDto[] {
   const safeTotal = Math.max(stats.totalRevenue, 1)
@@ -139,7 +141,7 @@ function typeBreakdown(stats: FinanceStatsDto): FinanceTypeBreakdownDto[] {
   return [
     row('Reservasi', 'booking', stats.bookingRevenue, '#E35336'),
     row('Membership', 'membership', stats.membershipRevenue, '#10B981'),
-    row('Biaya Admin', 'admin_fee', stats.adminFeeRevenue, '#0EA5E9'),
+    ...(stats.adminFeeRevenue > 0 ? [row('Biaya Admin', 'admin_fee', stats.adminFeeRevenue, '#0EA5E9')] : []),
     row('Kode Unik', 'unique_code', stats.uniqueCodeRevenue, '#A855F7')
   ]
 }

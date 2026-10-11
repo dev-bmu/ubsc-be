@@ -206,6 +206,26 @@ bayar. Rincian harga + admin + kode di halaman pembayaran. Riwayat pembayaran me
 - Role bawaan "Staff Front Office" hanya punya `bookings.read`. Agar FO bisa membuat walk-in dan
   menandai lunas, beri `bookings.manage` lewat halaman Role & Akses.
 
+### 2.8 Revisi client 2026-10-08: biaya admin dihapus, kode unik 501–999
+
+Client: "tidak ada biaya admin, akan tetapi kode unik dimulai lebih dari 500". Bagian 2.1–2.7 di atas
+tetap sebagai sejarah; yang berlaku sekarang:
+
+- **Biaya admin dihapus total.** Transaksi baru selalu `adminFee = 0`, nominal transfer = harga + kode
+  unik. Setting `payment_admin_fee` tidak lagi dibaca atau ditulis (barisnya dibiarkan, tanpa efek), field
+  "Biaya admin" hilang dari Pengaturan Pembayaran, dan `adminFee` dibuang dari `PaymentSettingsDto`/payload.
+  DTO pra-checkout pelanggan (fasilitas booking, pratinjau membership) mendapat `uniqueCodeMin`; `adminFee: 0`
+  (deprecated) masih dikirim SATU rilis supaya landing lama tidak menampilkan total '-' selama deploy —
+  hapus setelah landing baru live.
+- **Kolom `transactions.adminFee` tetap.** Transaksi lama yang membawa biaya tetap benar di mana-mana
+  (`transferTotal()`, invoice, email, export Accurate, pencarian nominal, laporan). Semua tampilan biaya
+  admin hanya muncul bila nilai transaksi/periode itu > 0; catatan item faktur Accurate tidak menyebut
+  "admin" bila biayanya 0. Tanpa migrasi.
+- **Kode unik 501..`payment_unique_code_max`** (default 999). Batas atas yang boleh disetel 600–999
+  (minimal 100 kode per nominal). Nilai tersimpan di luar rentang itu — termasuk 500 dari aturan lama —
+  jatuh ke 999, supaya checkout tidak gagal `PENDING_TOTAL_EXHAUSTED` karena rentang kosong.
+- Ringkasan sebelum bayar di landing: "+ kode unik Rp501–Rp999".
+
 ---
 
 ## 3. Fitur 2 — E-Card, check-in gym, dan analitik jam ramai

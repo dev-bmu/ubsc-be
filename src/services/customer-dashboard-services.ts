@@ -16,7 +16,7 @@ import { dateOnlyToString, formatInstant, now } from '../utils/clock'
 import { transferTotal } from '../utils/money'
 import { CustomerReviewValidation } from '../validation/customer-review-validation'
 import { Validation } from '../validation/Validation'
-import { adminFee, uniqueCodeMax } from './manual-payment-services'
+import { CODE_MIN, uniqueCodeMax } from './manual-payment-services'
 import { firstUrlFor, listFor } from './media-services'
 import { listPublicFacilities } from './public-facility-services'
 
@@ -360,8 +360,8 @@ function paymentUrlFor(bookingId: string): string {
  * Field-nya tetap dikirim supaya bentuk JSON-nya tidak berubah untuk klien yang sudah membacanya.
  *
  * transferTotal = amount + adminFee + uniqueCode — port Transaction::getTransferTotalAttribute()
- * (Transaction.php:73-76) ditambah biaya admin (utils/money.ts). uniqueCode sendiri tetap dikirim
- * apa adanya (null tetap null), sama seperti Laravel.
+ * (Transaction.php:73-76) ditambah biaya admin transaksi lama (utils/money.ts; transaksi baru 0).
+ * uniqueCode sendiri tetap dikirim apa adanya (null tetap null), sama seperti Laravel.
  *
  * paidAt/createdAt: `toDateTimeString()` -> 'YYYY-MM-DD HH:mm:ss' WIB.
  * bookingDate: kolom @db.Date, dikirim 'YYYY-MM-DD'. Laravel meneruskan objek Carbon-nya ke
@@ -426,8 +426,8 @@ export async function customerTransactions(userId: string): Promise<CustomerTran
 
 /** GET /api/public/booking/facilities */
 export async function bookingFacilityIndex(): Promise<BookingFacilityIndexDto> {
-  const [facilities, fee, codeMax] = await Promise.all([listBookingFacilities(), adminFee(), uniqueCodeMax()])
-  return { facilities, adminFee: fee, uniqueCodeMax: codeMax }
+  const [facilities, codeMax] = await Promise.all([listBookingFacilities(), uniqueCodeMax()])
+  return { facilities, uniqueCodeMin: CODE_MIN, uniqueCodeMax: codeMax, adminFee: 0 }
 }
 
 /** GET /api/public/booking/reviews */

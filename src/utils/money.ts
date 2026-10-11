@@ -21,7 +21,8 @@ export function slotPriceLabel(price: number): string {
 }
 
 /**
- * Yang benar-benar ditransfer pelanggan: harga + biaya admin + kode unik. Satu-satunya tempat rumus
+ * Yang benar-benar ditransfer pelanggan: harga + biaya admin + kode unik. Biaya admin selalu 0 untuk
+ * transaksi sejak revisi client 2026-10-08, tapi transaksi lama masih membawanya. Satu-satunya tempat rumus
  * ini ditulis — setiap tampilan nominal transfer dan setiap hitungan uang masuk lewat sini.
  */
 export function transferTotal(t: { amount: number; adminFee: number; uniqueCode: number | null }): number {

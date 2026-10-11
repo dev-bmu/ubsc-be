@@ -73,11 +73,11 @@ describe('overlap', () => {
     expect(membership.endDate.toISOString().slice(0, 10)).toBe('2026-03-03')
     expect(membership.status).toBe('pending_payment')
     const transaction = await prismaClient.transaction.findUniqueOrThrow({ where: { membershipId: membership.id } })
-    // Transfer terbuka tanpa batas waktu sebesar harga + biaya admin + kode unik — FO yang menandai lunas.
-    expect(transaction).toMatchObject({ paymentStatus: 'UNPAID', amount: 300_000, adminFee: 500, expiresAt: null })
-    expect(transaction.uniqueCode).toBeGreaterThanOrEqual(1)
-    expect(transaction.uniqueCode).toBeLessThanOrEqual(500)
-    expect(transaction.pendingTotal).toBe(300_500 + (transaction.uniqueCode as number))
+    // Transfer terbuka tanpa batas waktu sebesar harga + kode unik (tanpa biaya admin) — FO yang menandai lunas.
+    expect(transaction).toMatchObject({ paymentStatus: 'UNPAID', amount: 300_000, adminFee: 0, expiresAt: null })
+    expect(transaction.uniqueCode).toBeGreaterThanOrEqual(501)
+    expect(transaction.uniqueCode).toBeLessThanOrEqual(999)
+    expect(transaction.pendingTotal).toBe(300_000 + (transaction.uniqueCode as number))
     const history = await prismaClient.membershipHistory.findFirstOrThrow({ where: { membershipId: membership.id } })
     expect(history).toMatchObject({ action: 'created', transactionId: transaction.id })
     expect(history.metadata).toMatchObject({
@@ -122,7 +122,7 @@ describe('overlap', () => {
     expect(receipt).not.toContain('BCA 1234567890')
   })
 
-  it('membership bernominal 0 tidak kena biaya admin dan tidak diberi kode unik', async () => {
+  it('membership bernominal 0 langsung lunas tanpa kode unik', async () => {
     const customer = await createCustomer()
     const membership = await createMembership({ userId: customer.id, startDate: '2027-01-01', endDate: '2027-02-01', amount: 0 })
 
@@ -362,7 +362,7 @@ describe('tahap C: tarif Warga UB + checkout web', () => {
     expect(await membershipCheckoutPreview(user, wargaPlanId)).toMatchObject({
       amount: 200_000,
       priceCategory: 'warga_ub',
-      adminFee: 500,
+      uniqueCodeMin: 501,
       startsAfterCurrent: null,
       pendingMembershipId: null,
       memberPhotoStatus: 'pending'
@@ -372,7 +372,7 @@ describe('tahap C: tarif Warga UB + checkout web', () => {
     expect(first.created).toBe(true)
     const membership = await prismaClient.membership.findUniqueOrThrow({ where: { id: first.membershipId }, include: { transaction: true } })
     expect(membership).toMatchObject({ status: 'pending_payment', createdVia: 'self' })
-    expect(membership.transaction).toMatchObject({ paymentStatus: 'UNPAID', amount: 200_000, adminFee: 500 })
+    expect(membership.transaction).toMatchObject({ paymentStatus: 'UNPAID', amount: 200_000, adminFee: 0 })
     expect(membership.transaction?.expiresAt?.getTime()).toBe(addMinutes(FROZEN_NOW, 120).getTime())
 
     expect(await startMembershipCheckout(user, { membershipPlanId: wargaPlanId })).toEqual({ created: false, membershipId: first.membershipId })

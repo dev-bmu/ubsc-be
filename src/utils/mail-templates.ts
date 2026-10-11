@@ -141,8 +141,8 @@ export function paymentApprovedTemplate(input: {
   to: string
   receiptNumber: string
   /**
-   * Nominal yang ditransfer (harga + biaya admin + kode unik). Laravel memakai $transaction->amount;
-   * sejak ada biaya admin, angka itu tidak lagi sama dengan yang dikirim pelanggan.
+   * Nominal yang ditransfer (transferTotal: harga + kode unik, + biaya admin transaksi lama). Laravel
+   * memakai $transaction->amount; angka itu tidak sama dengan yang dikirim pelanggan.
    */
   amount: number
   booking: (MailBooking & { url: string }) | null
@@ -279,6 +279,7 @@ export interface InvoiceView {
   customer: { name: string; email: string | null; phone: string | null; memberNumber: string | null }
   item: { name: string; lines: string[] }
   amount: number
+  /** Biaya admin transaksi lama (0 sejak 2026-10-08) — barisnya hanya muncul bila > 0. */
   adminFee: number
   uniqueCode: number
   total: number

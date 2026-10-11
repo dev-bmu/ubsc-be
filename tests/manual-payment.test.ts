@@ -8,7 +8,7 @@ import { createAdminBooking, destroyBooking } from '../src/services/booking-admi
 import { createBooking } from '../src/services/booking-services'
 import { getFinanceReport } from '../src/services/finance-report-services'
 import { staffInvoice } from '../src/services/invoice-services'
-import { approve, attachProof, expire, reject } from '../src/services/manual-payment-services'
+import { approve, attachProof, DEFAULT_UNIQUE_CODE_MAX, expire, reject, uniqueCodeMax } from '../src/services/manual-payment-services'
 import { createMembership } from '../src/services/membership-services'
 import { removeQrisImage, updatePaymentSettings, uploadQrisImage } from '../src/services/payment-admin-services'
 import { paymentDetail } from '../src/services/payment-services'
@@ -355,44 +355,72 @@ describe('job payments:release-expired', () => {
   })
 })
 
-describe('biaya admin + kode unik (catatan client 2026-09)', () => {
+describe('kode unik 501..999 tanpa biaya admin (revisi client 2026-10-08)', () => {
   const setSetting = (key: string, value: string) => prismaClient.systemSetting.upsert({ where: { key }, update: { value }, create: { key, value } })
   const transactionOf = (id: string) => prismaClient.transaction.findUniqueOrThrow({ where: { id } })
 
-  it('transfer web: harga + Rp500 + kode 1..500, dan paket N sesi kena biaya admin satu kali', async () => {
+  it('transfer web: harga + kode 501..999, adminFee 0, dan paket N sesi tetap satu transaksi', async () => {
     setNowForTests(FROZEN_NOW)
     const court = await bookCourt('2026-10-26')
     const pkg = await bookPackage()
 
     for (const { transactionId } of [court, pkg]) {
       const t = await transactionOf(transactionId)
-      expect(t.adminFee).toBe(500)
-      expect(t.uniqueCode).toBeGreaterThanOrEqual(1)
-      expect(t.uniqueCode).toBeLessThanOrEqual(500)
-      expect(t.pendingTotal).toBe(t.amount + 500 + (t.uniqueCode as number))
+      expect(t.adminFee).toBe(0)
+      expect(t.uniqueCode).toBeGreaterThanOrEqual(501)
+      expect(t.uniqueCode).toBeLessThanOrEqual(999)
+      expect(t.pendingTotal).toBe(t.amount + (t.uniqueCode as number))
     }
     const sessionIds = (await groupOf(pkg.bookingId)).map((b) => b.id)
     expect(await prismaClient.transaction.count({ where: { bookingId: { in: sessionIds } } })).toBe(1)
   })
 
-  it('setting berlaku untuk transfer berikutnya saja; transfer yang sudah terbuka tidak berubah', async () => {
+  it('setting payment_admin_fee lama diabaikan; batas kode berlaku; nilai lama 500 jatuh ke 999', async () => {
     setNowForTests(FROZEN_NOW)
-    const before = await bookCourt('2026-10-27')
-    await setSetting('payment_admin_fee', '0')
-    await setSetting('payment_unique_code_max', '100')
+    await setSetting('payment_admin_fee', '500')
+    await setSetting('payment_unique_code_max', '600')
     try {
-      const after = await transactionOf((await bookCourt('2026-10-27')).transactionId)
-      expect(after.adminFee).toBe(0)
-      expect(after.uniqueCode).toBeLessThanOrEqual(100)
-      expect(after.pendingTotal).toBe(after.amount + (after.uniqueCode as number))
-      expect((await transactionOf(before.transactionId)).adminFee).toBe(500)
-    } finally {
-      await setSetting('payment_admin_fee', '500')
+      const capped = await transactionOf((await bookCourt('2026-10-27')).transactionId)
+      expect(capped.adminFee).toBe(0)
+      expect(capped.uniqueCode).toBeGreaterThanOrEqual(501)
+      expect(capped.uniqueCode).toBeLessThanOrEqual(600)
+      expect(capped.pendingTotal).toBe(capped.amount + (capped.uniqueCode as number))
+
+      // Prod masih bisa menyimpan 500 (aturan lama): tanpa fallback rentangnya 501..500 = kosong dan
+      // setiap checkout gagal PENDING_TOTAL_EXHAUSTED.
       await setSetting('payment_unique_code_max', '500')
+      expect(await uniqueCodeMax()).toBe(DEFAULT_UNIQUE_CODE_MAX)
+      const fallback = await transactionOf((await bookCourt('2026-10-27')).transactionId)
+      expect(fallback.uniqueCode).toBeGreaterThanOrEqual(501)
+      expect(fallback.uniqueCode).toBeLessThanOrEqual(999)
+    } finally {
+      await prismaClient.systemSetting.deleteMany({ where: { key: { in: ['payment_admin_fee', 'payment_unique_code_max'] } } })
     }
   })
 
-  it('walk-in: ditahan sampai Tandai Lunas (approve), batal melepas kodenya, gratis tanpa biaya dan kode', async () => {
+  it('pengaturan: adminFee tidak lagi diterima atau dikembalikan; batas kode 600..999', async () => {
+    const base = {
+      bankName: 'BCA',
+      accountNumber: '1234567890',
+      accountHolder: 'UB Sport Center (UJI)',
+      qrisMerchantName: '',
+      holdMinutes: HOLD_MINUTES
+    }
+    try {
+      const saved = await updatePaymentSettings({ ...base, adminFee: 500, uniqueCodeMax: 600 })
+      expect(saved).not.toHaveProperty('adminFee')
+      expect(saved.uniqueCodeMax).toBe(600)
+      expect(await prismaClient.systemSetting.findUnique({ where: { key: 'payment_admin_fee' } })).toBeNull()
+      expect((await updatePaymentSettings({ ...base, uniqueCodeMax: 999 })).uniqueCodeMax).toBe(999)
+      for (const max of [500, 599, 1000]) {
+        await expect(updatePaymentSettings({ ...base, uniqueCodeMax: max })).rejects.toThrow('Batas kode unik harus antara 600 dan 999.')
+      }
+    } finally {
+      await prismaClient.systemSetting.deleteMany({ where: { key: 'payment_unique_code_max' } })
+    }
+  })
+
+  it('walk-in: ditahan sampai Tandai Lunas (approve), batal melepas kodenya, gratis tanpa kode', async () => {
     setNowForTests(FROZEN_NOW)
     const facility = await createFacility({ capacity: 3 })
     const walkIn = (startTime: string, endTime: string, isFree = false) =>
@@ -400,8 +428,9 @@ describe('biaya admin + kode unik (catatan client 2026-09)', () => {
 
     const paid = await walkIn('10:00', '11:00')
     const open = await transactionOf(paid.transactionId)
-    expect(open).toMatchObject({ paymentStatus: 'UNPAID', adminFee: 500, expiresAt: null })
-    expect(open.pendingTotal).toBe(open.amount + 500 + (open.uniqueCode as number))
+    expect(open).toMatchObject({ paymentStatus: 'UNPAID', adminFee: 0, expiresAt: null })
+    expect(open.uniqueCode).toBeGreaterThan(500)
+    expect(open.pendingTotal).toBe(open.amount + (open.uniqueCode as number))
 
     const decision = await approve(paid.transactionId, staffId)
     expect(decision.total).toBe(open.pendingTotal)
@@ -422,15 +451,17 @@ describe('biaya admin + kode unik (catatan client 2026-09)', () => {
     })
   })
 
-  it('laporan keuangan: total pendapatan = harga + biaya admin + kode unik, dan rinciannya berjumlah total', async () => {
+  it('laporan keuangan: total pendapatan = harga + kode unik (+ biaya admin transaksi lama), rinciannya berjumlah total', async () => {
     setNowForTests(FROZEN_NOW)
     const court = await bookCourt('2026-10-29')
+    // Transaksi lama dari sebelum revisi masih membawa biaya admin — tetap ikut uang masuk dan total transfer.
+    const legacy = await prismaClient.transaction.update({ where: { id: court.transactionId }, data: { adminFee: 500 } })
     const customer = await createCustomer()
     const plan = await prismaClient.membershipPlan.create({ data: { name: 'Bulanan Laporan', price: 300_000, durationMonths: 1 } })
 
     // Maret 2027: tidak ada transaksi lain di berkas ini yang dibuat atau dibayar pada bulan itu.
     setNowForTests(jakartaWallTimeToUtc('2027-03-10', '09:00'))
-    await approve(court.transactionId, staffId)
+    expect((await approve(court.transactionId, staffId)).total).toBe(legacy.amount + 500 + (legacy.uniqueCode as number))
     const membership = await createMembership({ userId: customer.id, membershipPlanId: plan.id, startDate: '2027-03-10' })
     // Membership meja depan menunggu pembayaran sampai FO menandai lunas.
     await approve((await prismaClient.transaction.findUniqueOrThrow({ where: { membershipId: membership.id } })).id, staffId)
@@ -439,7 +470,7 @@ describe('biaya admin + kode unik (catatan client 2026-09)', () => {
     const expected = paid.reduce((sum, t) => sum + t.amount + t.adminFee + (t.uniqueCode ?? 0), 0)
 
     const report = await getFinanceReport({ month: '3', year: '2027' })
-    expect(report.stats).toMatchObject({ totalRevenue: expected, bookingRevenue: 100_000, membershipRevenue: 300_000, adminFeeRevenue: 1_000 })
+    expect(report.stats).toMatchObject({ totalRevenue: expected, bookingRevenue: 100_000, membershipRevenue: 300_000, adminFeeRevenue: 500 })
     expect(report.typeBreakdown.reduce((sum, row) => sum + row.revenue, 0)).toBe(expected)
     expect(report.ledger.reduce((sum, row) => sum + row.total, 0)).toBe(expected)
     expect(report.dailyRevenue[9]).toBe(expected)
@@ -494,8 +525,7 @@ describe('QRIS statis', () => {
         accountHolder: '',
         qrisMerchantName: 'UB SPORT CENTER',
         holdMinutes: HOLD_MINUTES,
-        adminFee: 500,
-        uniqueCodeMax: 500
+        uniqueCodeMax: 999
       })
       const court = await bookCourt('2026-10-07')
       expect(await paymentDetail(court.customer.id, court.bookingId)).toMatchObject({ qris: { imageUrl, merchantName: 'UB SPORT CENTER' } })

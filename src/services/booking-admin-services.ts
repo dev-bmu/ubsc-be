@@ -223,7 +223,7 @@ export async function createAdminBooking(request: unknown): Promise<AdminBooking
         }
       })
 
-      // Gratis = lunas tanpa transfer (tanpa biaya admin & kode). Selain itu transfer digantung ke
+      // Gratis = lunas tanpa transfer (tanpa kode unik). Selain itu transfer digantung ke
       // booking dengan expiry null = tidak pernah di-sweep, sampai FO menandainya lunas (approve).
       const transaction = v.isFree
         ? await recordFreeTransaction(tx, { bookingId: booking.id }, null)

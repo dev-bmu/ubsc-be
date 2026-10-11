@@ -550,7 +550,7 @@ export interface HomeDto {
  * awaitingCount   di antaranya yang buktinya sudah diunggah (verificationStatus='awaiting')
  * bookingId       booking terpilih: yang PERTAMA bukan 'awaiting', kalau tidak ada baru elemen pertama
  * receipt         nomor invoice 'UBSC-X-2026-0001'; null bila transaksinya tidak terbaca
- * total           amount + adminFee + uniqueCode, MENTAH (Navbar yang memformat), 0 bila transaksi tidak ada
+ * total           amount + adminFee + uniqueCode (adminFee 0 sejak 2026-10-08), MENTAH (Navbar yang memformat), 0 bila transaksi tidak ada
  * holdExpiresAt   ISO-8601 UTC atau null
  * url             tujuan pill. Padanan route('booking.payment', $booking) Laravel, dirakit dari env LANDING_URL
  *                 + '/booking/{bookingId}/pembayaran' supaya href-nya identik dan landing tidak perlu logika
@@ -714,6 +714,7 @@ export interface PaymentRedirectDto {
 export interface TransferPaymentDto {
   receiptNumber: string
   amount: number
+  /** Biaya admin transaksi LAMA; transaksi sejak 2026-10-08 selalu 0 — tampilkan hanya bila > 0. */
   adminFee: number
   uniqueCode: number
   /** amount + adminFee + uniqueCode — nominal yang harus ditransfer persis. */
@@ -764,6 +765,8 @@ export interface BookingHistoryItemDto {
   paymentStatus: PaymentStatus
   verificationStatus: VerificationStatus | null
   transferTotal: number
+  /** Biaya admin transaksi LAMA (0 sejak 2026-10-08 / tanpa transaksi) — tampilkan hanya bila > 0. */
+  adminFee: number
   hasPayment: boolean
   holdExpiresAt: string | null
   hasTicket: boolean
@@ -974,6 +977,7 @@ export interface AdminFacilityUnitsDto {
 export interface BookingTransactionDto {
   id: string
   amount: number
+  /** Biaya admin transaksi LAMA; transaksi sejak 2026-10-08 selalu 0 — tampilkan hanya bila > 0. */
   adminFee: number
   uniqueCode: number | null
   /** amount + adminFee + uniqueCode — yang ditransfer pelanggan walk-in. */
@@ -1033,7 +1037,7 @@ export interface AdminBookingIndexDto {
 export interface AdminBookingCreatedDto {
   bookingId: string
   transactionId: string
-  /** Nominal yang harus ditransfer tamu (harga + biaya admin + kode unik); 0 untuk booking gratis. */
+  /** Nominal yang harus ditransfer tamu (harga + kode unik); 0 untuk booking gratis. */
   total: number
 }
 
@@ -1140,6 +1144,7 @@ export type MembershipStatus = 'active' | 'expired' | 'cancelled' | 'pending_pay
 export interface MembershipTransactionDto {
   id: string
   amount: number
+  /** Biaya admin transaksi LAMA; transaksi sejak 2026-10-08 selalu 0 — tampilkan hanya bila > 0. */
   adminFee: number
   uniqueCode: number | null
   /** amount + adminFee + uniqueCode — yang ditransfer pelanggan di meja depan. */
@@ -1250,6 +1255,7 @@ export interface AdminPaymentRowDto {
   id: string
   receiptNumber: string
   amount: number
+  /** Biaya admin transaksi LAMA; transaksi sejak 2026-10-08 selalu 0 — tampilkan hanya bila > 0. */
   adminFee: number
   uniqueCode: number
   /** amount + adminFee + uniqueCode — yang ditransfer pelanggan. */
@@ -1277,7 +1283,7 @@ export interface PaymentBankDto {
 
 /**
  * QRIS statis merchant (keputusan client 2026-10-01): pelanggan memindai gambar ini lalu mengetik
- * nominal persis (harga + biaya admin + kode unik) sendiri. imageUrl root-relatif '/uploads/qris/...'.
+ * nominal persis (harga + kode unik) sendiri. imageUrl root-relatif '/uploads/qris/...'.
  */
 export interface PaymentQrisDto {
   imageUrl: string
@@ -1290,9 +1296,7 @@ export interface PaymentSettingsDto {
   /** null = gambar QRIS belum diunggah (POST /api/admin/payments/settings/qris). */
   qris: PaymentQrisDto | null
   holdMinutes: number
-  /** Rupiah per transaksi; 0 = biaya admin dimatikan. */
-  adminFee: number
-  /** Batas atas kode unik (1..999). */
+  /** Batas atas kode unik (600..999); kode unik diacak 501..nilai ini. */
   uniqueCodeMax: number
   /** Kode akun Kas/Bank Accurate untuk export Penerimaan Penjualan; '' = belum diisi. */
   accurateCashAccountNo: string
@@ -1318,9 +1322,7 @@ export interface PaymentSettingsPayload {
   /** Nama merchant yang tercetak di QRIS; '' boleh. Gambarnya lewat endpoint unggah tersendiri. */
   qrisMerchantName: string
   holdMinutes: number
-  /** 0..10000 rupiah. */
-  adminFee: number
-  /** 100..999. */
+  /** 600..999. */
   uniqueCodeMax: number
   /** Maks 30 karakter; '' boleh (export Penerimaan Penjualan lalu ditolak sampai diisi). */
   accurateCashAccountNo: string
@@ -1329,6 +1331,7 @@ export interface PaymentSettingsPayload {
 /**
  * totalRevenue = uang masuk (harga + biaya admin + kode unik) =
  * bookingRevenue + membershipRevenue + adminFeeRevenue + uniqueCodeRevenue. Dua yang pertama harga saja.
+ * Biaya admin dihapus 2026-10-08: adminFeeRevenue hanya berisi transaksi lama (0 untuk periode baru).
  * pendingFailedAmount dan averagePaidTransaction juga berbasis uang masuk.
  */
 export interface FinanceStatsDto {
@@ -1352,6 +1355,7 @@ export interface FinanceBreakdownRowDto {
   color: string
 }
 
+/** Baris 'admin_fee' hanya ada bila periodenya memuat transaksi lama yang membawa biaya admin. */
 export interface FinanceTypeBreakdownDto {
   name: string
   type: 'booking' | 'membership' | 'admin_fee' | 'unique_code'
@@ -1371,6 +1375,7 @@ export interface FinanceLedgerRowDto {
   subject: string
   /** Harga saja. */
   amount: number
+  /** Biaya admin transaksi LAMA; transaksi sejak 2026-10-08 selalu 0 — tampilkan hanya bila > 0. */
   adminFee: number
   uniqueCode: number
   /** amount + adminFee + uniqueCode. */
@@ -1458,9 +1463,14 @@ export interface MembershipCheckoutPreviewDto {
   amount: number
   priceCategory: UserCategory
   identityStatus: IdentityStatus
-  /** Biaya admin per transaksi; kode unik (1..uniqueCodeMax) baru diketahui setelah checkout. */
-  adminFee: number
+  /** Kode unik (uniqueCodeMin..uniqueCodeMax, mis. 501..999) baru diketahui setelah checkout. Tanpa biaya admin. */
+  uniqueCodeMin: number
   uniqueCodeMax: number
+  /**
+   * @deprecated Selalu 0 (biaya admin dihapus 2026-10-08). Dipertahankan SATU rilis supaya landing lama yang
+   * menghitung `amount + adminFee` tidak menampilkan '-' setelah API terdeploy; hapus setelah landing baru live.
+   */
+  adminFee: 0
   /** Perpanjangan: masa aktif baru mulai tanggal ini ('YYYY-MM-DD'). null = mulai saat pembayaran diverifikasi. */
   startsAfterCurrent: string | null
   /** Hari terakhir membership yang sedang aktif ('YYYY-MM-DD'), null bila tidak punya. */
@@ -2010,11 +2020,13 @@ export interface BookingFacilityDto extends FacilityDto {
 export interface BookingFacilityIndexDto {
   facilities: BookingFacilityDto[]
   /**
-   * Biaya admin per transaksi (rupiah, 0 = tidak ada) untuk ringkasan sebelum checkout. Kode unik
-   * baru diketahui setelah checkout, jadi yang ditampilkan di sini hanya batas atasnya.
+   * Rentang kode unik untuk ringkasan sebelum checkout (tanpa biaya admin sejak 2026-10-08). Kodenya
+   * baru diketahui setelah checkout, jadi yang ditampilkan di sini hanya rentangnya.
    */
-  adminFee: number
+  uniqueCodeMin: number
   uniqueCodeMax: number
+  /** @deprecated Selalu 0 (biaya admin dihapus 2026-10-08). Hanya untuk landing lama selama deploy; hapus satu rilis lagi. */
+  adminFee: 0
 }
 
 /** Ulasan yang sudah disetujui, bentuk kartu di halaman /booking (routes/web.php:170-179). */

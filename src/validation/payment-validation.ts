@@ -13,11 +13,10 @@ const emptyToUndefined = (value: unknown): unknown =>
 
 const HOLD_REQUIRED = 'Durasi hold wajib diisi.'
 const HOLD_RANGE = 'Durasi hold harus antara 15 dan 1440 menit.'
-const FEE_REQUIRED = 'Biaya admin wajib diisi (0 untuk mematikan).'
-const FEE_RANGE = 'Biaya admin harus antara Rp0 dan Rp10.000.'
 const CODE_MAX_REQUIRED = 'Batas kode unik wajib diisi.'
-// Di bawah 100, satu nominal hanya muat segelintir transfer terbuka sebelum checkout ditolak 409.
-const CODE_MAX_RANGE = 'Batas kode unik harus antara 100 dan 999.'
+// Kode unik dimulai dari 501 (CODE_MIN): batas atas minimal 600 supaya satu nominal muat 100 transfer
+// terbuka sebelum checkout ditolak 409. Sama dengan CODE_MAX_FLOOR..CODE_MAX_LIMIT di manual-payment-services.
+const CODE_MAX_RANGE = 'Batas kode unik harus antara 600 dan 999.'
 
 /** Bilangan bulat wajib dalam rentang, dari angka atau string form. */
 const requiredInt = (required: string, min: number, max: number, range: string) =>
@@ -61,8 +60,9 @@ export class PaymentValidation {
 
   /**
    * POST /api/admin/payments/settings — port updateSettings(): bank_name max:60, account_number max:40,
-   * account_holder max:80, hold_minutes integer 15..1440. Nama field camelCase. adminFee dan
-   * uniqueCodeMax baru (catatan client 2026-09), bukan dari Laravel.
+   * account_holder max:80, hold_minutes integer 15..1440. Nama field camelCase. uniqueCodeMax baru
+   * (catatan client 2026-09), bukan dari Laravel. adminFee dihapus (revisi client 2026-10-08) — bila masih
+   * dikirim, z.object membuangnya seperti kunci tak dikenal lain.
    */
   static readonly SETTINGS = z.object({
     // Rekening opsional sejak QRIS (2026-10-01): dipakai hanya bila gambar QRIS belum diunggah.
@@ -79,8 +79,7 @@ export class PaymentValidation {
         .min(15, { error: HOLD_RANGE })
         .max(1440, { error: HOLD_RANGE })
     ),
-    adminFee: requiredInt(FEE_REQUIRED, 0, 10_000, FEE_RANGE),
-    uniqueCodeMax: requiredInt(CODE_MAX_REQUIRED, 100, 999, CODE_MAX_RANGE),
+    uniqueCodeMax: requiredInt(CODE_MAX_REQUIRED, 600, 999, CODE_MAX_RANGE),
     /** Kolom EXPENSE ACCOUNT NO export Penerimaan Penjualan Accurate (template: maks 30). Boleh kosong. */
     accurateCashAccountNo: optionalText(30, 'Kode akun Kas/Bank Accurate maksimal 30 karakter.')
   })
