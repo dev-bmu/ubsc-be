@@ -160,6 +160,9 @@ function render(parts: Parts, pattern: string, translated: boolean): string {
       case 'd':
         out += pad(parts.day)
         break
+      case 'j':
+        out += String(parts.day)
+        break
       case 'H':
         out += pad(parts.hour)
         break
@@ -187,7 +190,7 @@ function render(parts: Parts, pattern: string, translated: boolean): string {
 
 /**
  * Setara `$carbonDate->translatedFormat($pattern)` untuk tanggal kalender (tanpa jam).
- * Token yang didukung: Y m d F M l D.
+ * Token yang didukung: Y m d j F M l D ('j' = tanggal tanpa nol: "6 Oktober", bukan "06 Oktober").
  */
 export function translatedDate(dateStr: string, pattern: string): string {
   const d = dateOnly(dateStr)

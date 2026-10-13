@@ -2,6 +2,7 @@ import { readdirSync } from 'fs'
 import { resolve } from 'path'
 import sharp from 'sharp'
 import request from 'supertest'
+import { formatDateTimeID } from '../shared/format'
 import { prismaClient } from '../src/application/database'
 import { web } from '../src/application/web'
 import { setNowForTests } from '../src/utils/clock'
@@ -218,11 +219,20 @@ describe('pelanggan', () => {
 
     const lead = await request(web).get(`/api/customer/booking/${bookingId}/pembayaran`).set('Authorization', auth).expect(200)
     expect(lead.body.data.sessions).toHaveLength(2)
-    expect(lead.body.data.sessions[0]).toMatchObject({ date: 'Sel, 06 Okt 2026', time: '18:00 – 19:00', status: 'pending', checkInUrl: null })
+    expect(lead.body.data.sessions[0]).toMatchObject({
+      date: 'Sel, 06 Okt 2026',
+      dateKey: '2026-10-06',
+      time: '18:00 – 19:00',
+      status: 'pending',
+      checkInUrl: null
+    })
 
     const history = await request(web).get('/api/customer/booking').set('Authorization', auth).expect(200)
     expect(history.body.data).toHaveLength(1)
-    expect(history.body.data[0].sessions).toHaveLength(2)
+    expect(history.body.data[0].sessions.map((s: { dateKey: string }) => s.dateKey)).toEqual(['2026-10-06', '2026-10-08'])
+    // Bahasa Indonesia ("13 Oktober 2026, 07.44"), bukan format() Carbon ("13 Oct 2026 07:44").
+    const leadRow = await prismaClient.booking.findUniqueOrThrow({ where: { id: bookingId } })
+    expect(history.body.data[0].createdAt).toBe(formatDateTimeID(leadRow.createdAt))
   })
 
   it('staff menolak: alasan wajib, lalu slot dilepas', async () => {

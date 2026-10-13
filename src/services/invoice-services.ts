@@ -40,7 +40,7 @@ const INVOICE_SELECT = {
 type InvoiceRow = Prisma.TransactionGetPayload<{ select: typeof INVOICE_SELECT }>
 
 function wibStamp(instant: Date): string {
-  return `${translatedDate(jakartaDate(instant), 'd F Y')}, ${jakartaHm(instant)} WIB`
+  return `${translatedDate(jakartaDate(instant), 'j F Y')}, ${jakartaHm(instant)} WIB`
 }
 
 function statusOf(t: InvoiceRow): InvoiceView['status'] {
@@ -51,7 +51,7 @@ function statusOf(t: InvoiceRow): InvoiceView['status'] {
 
 async function itemOf(t: InvoiceRow, status: InvoiceView['status']): Promise<InvoiceView['item']> {
   if (t.membership) {
-    const period = `${translatedDate(dateOnlyToString(t.membership.startDate), 'd F Y')} – ${translatedDate(dateOnlyToString(t.membership.endDate), 'd F Y')}`
+    const period = `${translatedDate(dateOnlyToString(t.membership.startDate), 'j F Y')} – ${translatedDate(dateOnlyToString(t.membership.endDate), 'j F Y')}`
     return {
       name: `Membership ${t.membership.membershipPlan?.name ?? 'Gym'}`,
       // Tanggal mulai membership yang belum lunas ditetapkan ulang saat pembayarannya disetujui.
@@ -68,7 +68,7 @@ async function itemOf(t: InvoiceRow, status: InvoiceView['status']): Promise<Inv
       .slice(0, MAX_SESSION_LINES)
       .map(
         (s) =>
-          `${translatedDate(dateOnlyToString(s.bookingDate), 'l, d F Y')} · ${s.startTime} – ${s.endTime}${s.facilityUnit ? ` · ${s.facilityUnit.name}` : ''}`
+          `${translatedDate(dateOnlyToString(s.bookingDate), 'l, j F Y')} · ${s.startTime} – ${s.endTime}${s.facilityUnit ? ` · ${s.facilityUnit.name}` : ''}`
       )
     if (sessions.length > MAX_SESSION_LINES) lines.push(`… dan ${sessions.length - MAX_SESSION_LINES} sesi lain`)
     return { name: t.booking.facility.name, lines }

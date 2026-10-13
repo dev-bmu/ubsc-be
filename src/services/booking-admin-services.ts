@@ -17,7 +17,6 @@ import { ResponseError } from '../error/response-error'
 import {
   dateOnly,
   dateOnlyToString,
-  formatInstant,
   fromMinutes,
   jakartaDate,
   jakartaHm,
@@ -86,6 +85,9 @@ function effectiveStatusOf(status: BookingStatus, endsAt: Date, at: Date): Booki
   return status === 'confirmed' && endsAt.getTime() < at.getTime() ? 'completed' : status
 }
 
+/** "13 Okt 2026 07:44" WIB, bulan Indonesia — FO membacanya apa adanya (bukan ISO / "Oct" ala formatInstant). */
+const stampID = (instant: Date): string => `${translatedDate(jakartaDate(instant), 'd M Y')} ${jakartaHm(instant)}`
+
 /** checkout_url Laravel di-drop dari skema (bug 3/8); diturunkan saat baca dari booking pemilik transaksi (lead). */
 function transactionDto(t: Transaction): BookingTransactionDto {
   return {
@@ -96,10 +98,10 @@ function transactionDto(t: Transaction): BookingTransactionDto {
     total: transferTotal(t),
     paymentStatus: t.paymentStatus,
     checkoutUrl: t.bookingId ? `${ADMIN_BASE}/bookings/${t.bookingId}` : null,
-    paidAt: t.paidAt ? formatInstant(t.paidAt, 'Y-m-d H:i') : null,
+    paidAt: t.paidAt ? stampID(t.paidAt) : null,
     receiptNumber: t.invoiceNumber,
     verificationStatus: t.verificationStatus,
-    proofUploadedAt: t.proofUploadedAt ? formatInstant(t.proofUploadedAt, 'd M Y H:i') : null,
+    proofUploadedAt: t.proofUploadedAt ? stampID(t.proofUploadedAt) : null,
     proofUrl: t.proofPath ? `/admin/payments/${t.id}/bukti` : null,
     rejectionReason: t.rejectionReason
   }
@@ -131,13 +133,13 @@ function transformBooking(booking: AdminBookingRow, at: Date): AdminBookingDto {
     facilityName: booking.facility.name,
     bookingMode: booking.facility.bookingMode ?? 'court',
     facilityUnitName: booking.facilityUnit?.name ?? null,
-    checkedInAt: booking.checkedInAt ? formatInstant(booking.checkedInAt, 'd M Y H:i') : null,
+    checkedInAt: booking.checkedInAt ? stampID(booking.checkedInAt) : null,
     checkedInBy: booking.checkedInBy?.name ?? null,
     checkInUrl: booking.checkInToken ? `${ADMIN_BASE}/checkin/${booking.checkInToken}` : null,
     hasEnded: booking.endsAt.getTime() < at.getTime(),
     transaction: transaction ? transactionDto(transaction) : null,
     reschedules: booking.reschedules.map((r) => ({
-      at: `${translatedDate(jakartaDate(r.createdAt), 'd M Y')} ${jakartaHm(r.createdAt)}`,
+      at: stampID(r.createdAt),
       by: r.actor?.name ?? null,
       from: { date: dateOnlyToString(r.fromDate), startTime: r.fromStartTime, endTime: r.fromEndTime, unitName: r.fromUnitName },
       to: { date: dateOnlyToString(r.toDate), startTime: r.toStartTime, endTime: r.toEndTime, unitName: r.toUnitName },

@@ -11,6 +11,7 @@ import type {
   SlotsDto
 } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
+import { formatDateTimeID } from '../../shared/format'
 import { TX_OPTIONS } from '../application/transaction'
 import { ResponseError } from '../error/response-error'
 import { UserWithRelations } from '../type/user-request'
@@ -19,7 +20,6 @@ import {
   dateOnly,
   dateOnlyToString,
   daysInMonth,
-  formatInstant,
   jakartaDate,
   jakartaHm,
   jakartaWallTimeToUtc,
@@ -617,7 +617,9 @@ export async function bookingHistory(userId: string): Promise<BookingHistoryItem
           ? sessions.map((s) => ({
               id: s.id,
               date: translatedDate(dateOnlyToString(s.bookingDate), 'D, d M Y'),
+              dateKey: dateOnlyToString(s.bookingDate),
               time: `${s.startTime.slice(0, 5)} – ${s.endTime.slice(0, 5)}`,
+              unitName: s.facilityUnit?.name ?? null,
               status: s.status
             }))
           : null,
@@ -636,10 +638,10 @@ export async function bookingHistory(userId: string): Promise<BookingHistoryItem
       hasPayment: t !== null,
       holdExpiresAt: lead.holdExpiresAt?.toISOString() ?? null,
       hasTicket: t?.paymentStatus === 'PAID' && (lead.status === 'confirmed' || lead.status === 'completed'),
-      // format() Carbon TIDAK diterjemahkan: "17 Aug 2026 10:00".
-      checkedInAt: lead.checkedInAt ? formatInstant(lead.checkedInAt, 'd M Y H:i') : null,
+      // Bahasa Indonesia, bukan format() Carbon ("17 Aug 2026 10:00"): "17 Agustus 2026, 10.00".
+      checkedInAt: lead.checkedInAt ? formatDateTimeID(lead.checkedInAt) : null,
       receipt: t ? t.invoiceNumber : null,
-      createdAt: formatInstant(lead.createdAt, 'd M Y H:i')
+      createdAt: formatDateTimeID(lead.createdAt)
     }
   })
 }

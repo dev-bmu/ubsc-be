@@ -194,3 +194,28 @@ describe('pencarian', () => {
     expect(await search('rejected', 'budi')).toEqual([rejectedId])
   })
 })
+
+describe('subjek booking', () => {
+  it('tanggal berbahasa Indonesia; paket menampilkan semua sesi, bukan hanya lead', async () => {
+    const row = async () =>
+      (await queue({ tab: 'awaiting', q: 'budi' }).expect(200)).body.data.transactions[0] as {
+        proofUploadedAt: string
+        subject: Record<string, string | null>
+      }
+
+    const single = await row()
+    expect(single.subject).toMatchObject({ date: 'Selasa, 6 Oktober 2026', package: null, sessions: null })
+    expect(single.proofUploadedAt).not.toMatch(/Oct/)
+
+    const { bookingId } = await prismaClient.transaction.findUniqueOrThrow({ where: { id: budiAwaitingId } })
+    const lead = await prismaClient.booking.update({ where: { id: bookingId as string }, data: { bookingGroupId: bookingId } })
+    const facilityId = lead.facilityId
+    const second = await insertBooking({ facilityId, date: '2026-10-08', startTime: '10:00', endTime: '11:00' })
+    await prismaClient.booking.update({ where: { id: second.id }, data: { bookingGroupId: lead.id } })
+
+    expect((await row()).subject).toMatchObject({
+      package: 'Paket 2 sesi',
+      sessions: 'Selasa, 6 Oktober 2026 · 10:00 - 11:00\nKamis, 8 Oktober 2026 · 10:00 - 11:00'
+    })
+  })
+})

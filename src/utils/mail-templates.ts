@@ -120,11 +120,10 @@ export function resetPasswordTemplate(input: { to: string; name: string; url: st
 }
 
 // ===== 3. Pembayaran disetujui =====
-// Isi mengikuti app/Mail/PaymentApproved.php + emails/payment-approved.blade.php kata per kata.
-// Dikirim setelah approve() commit (payment-verification-services).
+// Berasal dari app/Mail/PaymentApproved.php; jadwal kini kotak menonjol yang memuat SEMUA sesi paket
+// (Laravel hanya menyebut lead). Dikirim setelah approve() commit (payment-verification-services).
 
-interface MailBooking {
-  facilityName: string
+interface MailSession {
   unitName?: string | null
   /** "YYYY-MM-DD" */
   date: string
@@ -132,9 +131,60 @@ interface MailBooking {
   endTime: string
 }
 
-/** Carbon translatedFormat('l, d F Y') + "HH:mm – HH:mm", sama dengan kedua Mailable Laravel. */
-function bookingWhen(booking: MailBooking): { date: string; time: string } {
-  return { date: translatedDate(booking.date, 'l, d F Y'), time: `${booking.startTime.slice(0, 5)} – ${booking.endTime.slice(0, 5)}` }
+interface MailBooking extends MailSession {
+  facilityName: string
+}
+
+/** Satu transaksi = satu fasilitas, satu sesi atau lebih (paket kelas). */
+interface MailSchedule {
+  facilityName: string
+  sessions: MailSession[]
+}
+
+/** "Senin, 6 Oktober 2026" + "14:00 – 15:00" — tanggal panjang Indonesia, tanpa nol di depan hari. */
+function bookingWhen(session: MailSession): { date: string; time: string } {
+  return { date: translatedDate(session.date, 'l, j F Y'), time: `${session.startTime.slice(0, 5)} – ${session.endTime.slice(0, 5)}` }
+}
+
+function sessionLine(session: MailSession): string {
+  const when = bookingWhen(session)
+  return `${when.date} · ${when.time}${session.unitName ? ` · ${session.unitName}` : ''}`
+}
+
+/**
+ * Kotak jadwal yang menonjol: tanggal besar, satu baris per sesi, "Sesi 1 dari 2" untuk paket. Pelanggan
+ * sering hanya memindai email — jadwal tidak boleh tenggelam di paragraf. 'void' = abu-abu dicoret
+ * (jadwal lama / reservasi batal).
+ */
+function scheduleHtml(label: string, schedule: MailSchedule, tone: 'active' | 'void' = 'active'): string {
+  const c =
+    tone === 'active'
+      ? { bg: '#eef4fb', border: '#c9d8ec', label: BRAND, text: '#1a2230', strike: '' }
+      : { bg: '#f4f5f7', border: '#e0e3e8', label: '#8b93a1', text: '#8b93a1', strike: 'text-decoration:line-through;' }
+  const total = schedule.sessions.length
+  const rows = schedule.sessions
+    .map((s, i) => {
+      const when = bookingWhen(s)
+      return `<tr><td style="padding:10px 0;border-top:1px solid ${c.border}">
+      ${total > 1 ? `<div style="font-size:12px;font-weight:700;color:${c.label}">SESI ${i + 1} DARI ${total}</div>` : ''}
+      <div style="font-size:18px;line-height:26px;font-weight:700;color:${c.text};${c.strike}">${escapeHtml(when.date)}</div>
+      <div style="font-size:15px;line-height:22px;color:${c.text};${c.strike}">Pukul <strong>${escapeHtml(when.time)}</strong>${s.unitName ? ` · ${escapeHtml(s.unitName)}` : ''}</div>
+    </td></tr>`
+    })
+    .join('')
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0;background:${c.bg};border:1px solid ${c.border};border-radius:10px">
+  <tr><td style="padding:14px 18px 4px">
+    <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:${c.label}">${escapeHtml(label)}${total > 1 ? ` · PAKET ${total} SESI` : ''}</div>
+    <div style="font-size:16px;font-weight:700;color:${c.text};padding:4px 0 8px">${escapeHtml(schedule.facilityName)}</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+  </td></tr>
+</table>`
+}
+
+function scheduleText(label: string, schedule: MailSchedule): string {
+  const total = schedule.sessions.length
+  const lines = schedule.sessions.map((s, i) => `${total > 1 ? `Sesi ${i + 1} dari ${total}: ` : ''}${sessionLine(s)}`)
+  return `${label}${total > 1 ? ` (Paket ${total} sesi)` : ''}\n${schedule.facilityName}\n${lines.join('\n')}`
 }
 
 export function paymentApprovedTemplate(input: {
@@ -145,23 +195,17 @@ export function paymentApprovedTemplate(input: {
    * memakai $transaction->amount; angka itu tidak sama dengan yang dikirim pelanggan.
    */
   amount: number
-  booking: (MailBooking & { url: string }) | null
+  booking: (MailSchedule & { url: string }) | null
 }): MailInput {
   const amount = rupiahPlain(input.amount)
-  const when = input.booking ? bookingWhen(input.booking) : null
-  const unit = input.booking?.unitName ? ` · ${escapeHtml(input.booking.unitName)}` : ''
+  const qr =
+    input.booking && input.booking.sessions.length > 1
+      ? 'Setiap sesi punya QR tiket sendiri. Saat datang, buka halaman reservasi dan tunjukkan QR sesi hari itu kepada petugas untuk check-in.'
+      : 'Saat datang, tunjukkan QR tiket di halaman reservasi kepada petugas untuk check-in.'
 
-  const bookingHtml =
-    input.booking && when
-      ? `<br><br><strong>${escapeHtml(input.booking.facilityName)}</strong>${unit}<br>
-    ${escapeHtml(when.date)} · ${escapeHtml(when.time)}<br><br>
-    Saat datang, tunjukkan QR tiket di halaman reservasi kepada petugas untuk check-in.`
-      : ''
+  const bookingHtml = input.booking ? `${scheduleHtml('JADWAL ANDA', input.booking)}${escapeHtml(qr)}` : ''
 
-  const bookingText =
-    input.booking && when
-      ? `\n\n${input.booking.facilityName}${input.booking.unitName ? ` · ${input.booking.unitName}` : ''}\n${when.date} · ${when.time}\n\nSaat datang, tunjukkan QR tiket di halaman reservasi kepada petugas untuk check-in.\n\nLihat Tiket & QR: ${input.booking.url}`
-      : ''
+  const bookingText = input.booking ? `\n\n${scheduleText('JADWAL ANDA', input.booking)}\n\n${qr}\n\nLihat Tiket & QR: ${input.booking.url}` : ''
 
   return {
     to: input.to,
@@ -179,26 +223,21 @@ export function paymentApprovedTemplate(input: {
 }
 
 // ===== 4. Bukti transfer ditolak =====
-// Isi mengikuti app/Mail/PaymentRejected.php + emails/payment-rejected.blade.php kata per kata.
+// Berasal dari app/Mail/PaymentRejected.php; sesi yang dibatalkan ditampilkan semuanya (paket).
 
 export function paymentRejectedTemplate(input: {
   to: string
   receiptNumber: string
   reason: string
-  booking: MailBooking | null
+  booking: MailSchedule | null
   /** Tombol "Pesan Ulang" — halaman /booking landing. */
   bookingUrl: string
 }): MailInput {
-  const when = input.booking ? bookingWhen(input.booking) : null
-
-  const bookingHtml =
-    input.booking && when
-      ? `<br><br>Reservasi <strong>${escapeHtml(input.booking.facilityName)}</strong> pada ${escapeHtml(when.date)} · ${escapeHtml(when.time)} telah dibatalkan dan slotnya dilepas kembali.`
-      : ''
-  const bookingText =
-    input.booking && when
-      ? `\n\nReservasi ${input.booking.facilityName} pada ${when.date} · ${when.time} telah dibatalkan dan slotnya dilepas kembali.`
-      : ''
+  const cancelled = 'Reservasi berikut telah dibatalkan dan slotnya dilepas kembali:'
+  const bookingHtml = input.booking
+    ? `<br><br>${escapeHtml(cancelled)}${scheduleHtml('RESERVASI DIBATALKAN', input.booking, 'void')}`
+    : '<br><br>'
+  const bookingText = input.booking ? `\n\n${cancelled}\n\n${scheduleText('RESERVASI DIBATALKAN', input.booking)}` : ''
 
   const closing = 'Jika Anda yakin dana sudah terkirim, balas email ini atau hubungi kami — kami akan bantu cek mutasinya. Untuk memesan kembali:'
 
@@ -209,7 +248,7 @@ export function paymentRejectedTemplate(input: {
     html: layout({
       heading: 'Bukti transfer ditolak',
       bodyHtml: `Bukti transfer untuk <strong>${escapeHtml(input.receiptNumber)}</strong> tidak dapat kami cocokkan dengan mutasi rekening.<br><br>
-    <strong>Alasan:</strong> ${escapeHtml(input.reason)}${bookingHtml}<br><br>
+    <strong>Alasan:</strong> ${escapeHtml(input.reason)}${bookingHtml}
     ${escapeHtml(closing)}`,
       ctaLabel: 'Pesan Ulang',
       ctaUrl: input.bookingUrl,
@@ -238,8 +277,8 @@ export function membershipActiveTemplate(input: {
   payment: { receiptNumber: string; total: number } | null
   cardUrl: string
 }): MailInput {
-  const start = translatedDate(input.startDate, 'd F Y')
-  const end = translatedDate(input.endDate, 'd F Y')
+  const start = translatedDate(input.startDate, 'j F Y')
+  const end = translatedDate(input.endDate, 'j F Y')
   const paidHtml = input.payment
     ? `Pembayaran <strong>${escapeHtml(input.payment.receiptNumber)}</strong> sebesar <strong>${escapeHtml(rupiahPlain(input.payment.total))}</strong> sudah kami terima.<br><br>`
     : ''
@@ -403,14 +442,11 @@ export function bookingRescheduledTemplate(input: {
   reason: string | null
   url: string
 }): MailInput {
-  const line = (b: MailBooking) => {
-    const when = bookingWhen(b)
-    return `${when.date} · ${when.time}${b.unitName ? ` · ${b.unitName}` : ''}`
-  }
-  const before = line(input.before)
-  const after = line(input.after)
+  const before = sessionLine(input.before)
+  const after = sessionLine(input.after)
   const facility = input.after.facilityName
   const qr = 'QR check-in Anda tetap berlaku — tunjukkan QR yang sama kepada petugas saat datang.'
+  const arrow = `<div style="text-align:center;font-size:12px;font-weight:700;letter-spacing:1px;color:#8b93a1">&#8595; DIPINDAH KE &#8595;</div>`
 
   return {
     to: input.to,
@@ -418,14 +454,15 @@ export function bookingRescheduledTemplate(input: {
     template: 'booking-rescheduled',
     html: layout({
       heading: 'Jadwal reservasi Anda diubah',
-      bodyHtml: `Halo ${escapeHtml(input.name)},<br><br>Petugas kami memindahkan jadwal reservasi <strong>${escapeHtml(facility)}</strong> Anda.<br><br>
-    Jadwal lama: <span style="text-decoration:line-through">${escapeHtml(before)}</span><br>
-    Jadwal baru: <strong>${escapeHtml(after)}</strong>${input.reason ? `<br><br><strong>Alasan:</strong> ${escapeHtml(input.reason)}` : ''}<br><br>
+      bodyHtml: `Halo ${escapeHtml(input.name)},<br><br>Petugas kami memindahkan jadwal reservasi <strong>${escapeHtml(facility)}</strong> Anda. Mohon datang sesuai <strong>JADWAL BARU</strong>.
+    ${scheduleHtml('JADWAL LAMA', { facilityName: input.before.facilityName, sessions: [input.before] }, 'void')}
+    ${arrow}
+    ${scheduleHtml('JADWAL BARU', { facilityName: facility, sessions: [input.after] })}${input.reason ? `<strong>Alasan:</strong> ${escapeHtml(input.reason)}<br><br>` : ''}
     ${escapeHtml(qr)}`,
       ctaLabel: 'Lihat Riwayat Booking',
       ctaUrl: input.url,
       footerNote: `Sampai jumpa di lapangan,<br>${escapeHtml(MAIL_FROM_NAME)}`
     }),
-    text: `Halo ${input.name},\n\nPetugas kami memindahkan jadwal reservasi ${facility} Anda.\n\nJadwal lama: ${before}\nJadwal baru: ${after}${input.reason ? `\n\nAlasan: ${input.reason}` : ''}\n\n${qr}\n\nLihat riwayat booking: ${input.url}\n\nSampai jumpa di lapangan,\n${MAIL_FROM_NAME}`
+    text: `Halo ${input.name},\n\nPetugas kami memindahkan jadwal reservasi ${facility} Anda. Mohon datang sesuai JADWAL BARU.\n\nJADWAL LAMA (tidak berlaku): ${before}\nJADWAL BARU: ${after}${input.reason ? `\n\nAlasan: ${input.reason}` : ''}\n\n${qr}\n\nLihat riwayat booking: ${input.url}\n\nSampai jumpa di lapangan,\n${MAIL_FROM_NAME}`
   }
 }

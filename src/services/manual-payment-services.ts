@@ -334,8 +334,15 @@ export interface PaymentDecision {
   total: number
   rejectionReason: string | null
   customer: { email: string | null; name: string | null }
-  /** Booking lead yang dibayar transaksi ini; null untuk transaksi membership. */
-  booking: { id: string; facilityName: string; unitName: string | null; date: string; startTime: string; endTime: string } | null
+  /**
+   * Booking yang dibayar transaksi ini (id = lead); null untuk transaksi membership. `sessions` = SELURUH
+   * sesi grup, urut waktu — email paket wajib menyebut semuanya, bukan hanya lead.
+   */
+  booking: {
+    id: string
+    facilityName: string
+    sessions: { unitName: string | null; date: string; startTime: string; endTime: string }[]
+  } | null
   /** Membership yang dibayar transaksi ini (tanggal SETELAH aktivasi); null untuk transaksi booking. */
   membership: { planName: string; startDate: string; endDate: string; customerNumber: string | null } | null
 }
@@ -352,18 +359,16 @@ async function decisionInfo(tx: Db, transactionId: string): Promise<PaymentDecis
       rejectionReason: true,
       user: { select: { email: true, name: true, customerSequence: true } },
       membership: { select: { startDate: true, endDate: true, membershipPlan: { select: { name: true } } } },
-      booking: {
-        select: {
-          id: true,
-          bookingDate: true,
-          startTime: true,
-          endTime: true,
-          facility: { select: { name: true } },
-          facilityUnit: { select: { name: true } }
-        }
-      }
+      booking: { select: { id: true, bookingGroupId: true, facility: { select: { name: true } } } }
     }
   })
+  const sessions = t.booking
+    ? await tx.booking.findMany({
+        where: groupWhere(t.booking),
+        orderBy: { startsAt: 'asc' },
+        select: { bookingDate: true, startTime: true, endTime: true, facilityUnit: { select: { name: true } } }
+      })
+    : []
   return {
     transactionId: t.id,
     invoiceNumber: t.invoiceNumber,
@@ -374,10 +379,12 @@ async function decisionInfo(tx: Db, transactionId: string): Promise<PaymentDecis
       ? {
           id: t.booking.id,
           facilityName: t.booking.facility.name,
-          unitName: t.booking.facilityUnit?.name ?? null,
-          date: dateOnlyToString(t.booking.bookingDate),
-          startTime: t.booking.startTime,
-          endTime: t.booking.endTime
+          sessions: sessions.map((b) => ({
+            unitName: b.facilityUnit?.name ?? null,
+            date: dateOnlyToString(b.bookingDate),
+            startTime: b.startTime,
+            endTime: b.endTime
+          }))
         }
       : null,
     membership: t.membership

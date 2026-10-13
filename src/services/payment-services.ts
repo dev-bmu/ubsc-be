@@ -3,7 +3,8 @@ import type { BookingSessionDto, PaymentDetailDto, PaymentRedirectDto, TransferP
 import { prismaClient } from '../application/database'
 import { ADMIN_URL } from '../config'
 import { ResponseError } from '../error/response-error'
-import { dateOnlyToString, formatInstant, now, translatedDate } from '../utils/clock'
+import { formatDateTimeID } from '../../shared/format'
+import { dateOnlyToString, now, translatedDate } from '../utils/clock'
 import { transferTotal } from '../utils/money'
 import { attachProof, bankAccount, qrisSetting } from './manual-payment-services'
 import { deletePrivateFile, proofMimeFor, readPrivateFile, storePaymentProof } from './payment-proof-services'
@@ -82,14 +83,17 @@ async function presentPayment(booking: LeadWithPayment): Promise<PaymentDetailDt
   if (booking.bookingGroupId) {
     const group = await prismaClient.booking.findMany({
       where: { bookingGroupId: booking.bookingGroupId },
+      include: { facilityUnit: { select: { name: true } } },
       orderBy: [{ bookingDate: 'asc' }, { startTime: 'asc' }]
     })
     sessions = group.map((s) => ({
       id: s.id,
       date: translatedDate(dateOnlyToString(s.bookingDate), 'D, d M Y'),
+      dateKey: dateOnlyToString(s.bookingDate),
       time: `${s.startTime.slice(0, 5)} – ${s.endTime.slice(0, 5)}`,
+      unitName: s.facilityUnit?.name ?? null,
       status: s.status,
-      checkedInAt: s.checkedInAt ? formatInstant(s.checkedInAt, 'd M H:i') : null,
+      checkedInAt: s.checkedInAt ? formatDateTimeID(s.checkedInAt) : null,
       checkInUrl: paid && s.status !== 'cancelled' ? checkInUrl(s.checkInToken) : null
     }))
   }
@@ -114,7 +118,7 @@ async function presentPayment(booking: LeadWithPayment): Promise<PaymentDetailDt
       paid && booking.status !== 'cancelled'
         ? {
             checkInUrl: checkInUrl(booking.checkInToken) ?? '',
-            checkedInAt: booking.checkedInAt ? formatInstant(booking.checkedInAt, 'd M Y H:i') : null
+            checkedInAt: booking.checkedInAt ? formatDateTimeID(booking.checkedInAt) : null
           }
         : null
   }

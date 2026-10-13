@@ -6,7 +6,8 @@ import { prismaClient } from '../application/database'
 import { TX_OPTIONS } from '../application/transaction'
 import { UPLOAD_LIMITS } from '../config/upload'
 import { ResponseError } from '../error/response-error'
-import { dateOnlyToString, formatInstant, jakartaWallTimeToUtc } from '../utils/clock'
+import { formatDateTimeID } from '../../shared/format'
+import { dateOnlyToString, translatedDate } from '../utils/clock'
 import { transferTotal } from '../utils/money'
 import { paginationMeta } from '../utils/respond'
 import { deleteObjects, ownedPublicKey, publicUrl, putObject } from '../utils/storage'
@@ -38,7 +39,12 @@ const QUEUE_INCLUDE = {
       endTime: true,
       status: true,
       facility: { select: { name: true } },
-      facilityUnit: { select: { name: true } }
+      facilityUnit: { select: { name: true } },
+      // Lead paket menyimpan id-nya sendiri sebagai bookingGroupId, jadi daftar ini memuat lead juga.
+      groupMembers: {
+        select: { bookingDate: true, startTime: true, endTime: true },
+        orderBy: [{ bookingDate: 'asc' }, { startTime: 'asc' }]
+      }
     }
   },
   membership: { select: { membershipPlan: { select: { name: true } } } }
@@ -46,28 +52,26 @@ const QUEUE_INCLUDE = {
 
 type QueueRow = Prisma.TransactionGetPayload<{ include: typeof QUEUE_INCLUDE }>
 
-/**
- * Carbon `->format('d M Y')` pada kolom tanggal: TIDAK diterjemahkan (bulan Inggris, 'Sep'), berbeda dari
- * translatedDate(). Tanggal kalender dijangkarkan ke tengah malam Jakarta supaya formatInstant (yang
- * membaca jam Jakarta) mengembalikan tanggal yang sama.
- */
-function formatCalendarDate(value: Date): string {
-  return formatInstant(jakartaWallTimeToUtc(dateOnlyToString(value), '00:00'), 'd M Y')
-}
+/** Tanggal kalender untuk staf FO: "Senin, 19 Oktober 2026" — bukan 'd M Y' Carbon berbulan Inggris ("19 Oct 2026"). */
+const longDate = (value: Date): string => translatedDate(dateOnlyToString(value), 'l, j F Y')
 
-/** present() Laravel. Semua instan diformat 'd M Y H:i' jam Jakarta, bulan Inggris (Carbon::format). */
+/** present() Laravel, tetapi semua tanggal berbahasa Indonesia (formatDateTimeID: "13 Oktober 2026, 07.44"). */
 function presentRow(t: QueueRow): AdminPaymentRowDto {
   const uniqueCode = t.uniqueCode ?? 0
 
   // `$subject instanceof Booking` / `instanceof Membership`: yang dicek adalah relasi yang TERMUAT, bukan
   // sekadar kolom id — transaksi booking yang barisnya hilang jatuh ke cabang { plan } dengan type booking.
+  // Paket = satu transfer untuk N sesi; FO harus melihat semuanya, bukan hanya sesi lead.
+  const group = t.booking && t.booking.groupMembers.length > 1 ? t.booking.groupMembers : null
   const subject: Record<string, string | null> = t.booking
     ? {
         facility: t.booking.facility?.name ?? '-',
         unit: t.booking.facilityUnit?.name ?? null,
-        date: formatCalendarDate(t.booking.bookingDate),
+        date: longDate(t.booking.bookingDate),
         time: `${t.booking.startTime.slice(0, 5)} - ${t.booking.endTime.slice(0, 5)}`,
-        status: t.booking.status
+        status: t.booking.status,
+        package: group ? `Paket ${group.length} sesi` : null,
+        sessions: group ? group.map((s) => `${longDate(s.bookingDate)} · ${s.startTime.slice(0, 5)} - ${s.endTime.slice(0, 5)}`).join('\n') : null
       }
     : { plan: t.membership?.membershipPlan?.name ?? 'Membership' }
 
@@ -83,8 +87,8 @@ function presentRow(t: QueueRow): AdminPaymentRowDto {
     rejectionReason: t.rejectionReason,
     // route('payments.proof') Laravel -> path relatif terhadap baseURL axios admin ('/api').
     proofUrl: t.proofPath ? `/admin/payments/${t.id}/bukti` : null,
-    proofUploadedAt: t.proofUploadedAt ? formatInstant(t.proofUploadedAt, 'd M Y H:i') : null,
-    paidAt: t.paidAt ? formatInstant(t.paidAt, 'd M Y H:i') : null,
+    proofUploadedAt: t.proofUploadedAt ? formatDateTimeID(t.proofUploadedAt) : null,
+    paidAt: t.paidAt ? formatDateTimeID(t.paidAt) : null,
     verifiedBy: t.verifiedBy?.name ?? null,
     customer: {
       name: t.user?.name ?? '-',

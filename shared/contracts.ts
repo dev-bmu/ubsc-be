@@ -695,9 +695,14 @@ export interface BookingSessionDto {
   id: string
   /** Carbon translatedFormat('D, d M Y'): "Sen, 17 Agt 2026". */
   date: string
+  /** "YYYY-MM-DD" — untuk tanggal panjang ("Senin, 17 Agustus 2026") dan penanda "Hari ini" di klien. */
+  dateKey: string
   /** "08:00 – 09:00" (en dash). */
   time: string
+  /** Unit sesi ini — bisa berbeda antar sesi paket bila admin memindahkan satu sesi ke unit lain. */
+  unitName: string | null
   status: BookingStatus
+  /** Instan check-in, sudah diformat: "17 Agustus 2026, 08.05". */
   checkedInAt?: string | null
   checkInUrl?: string | null
 }
@@ -1322,13 +1327,17 @@ export interface AdminPaymentRowDto {
   rejectionReason: string | null
   /** Path API relatif ('/admin/payments/:id/bukti') — diambil lewat axios (Bearer) lalu dibuka sebagai blob. */
   proofUrl: string | null
-  /** 'd M Y H:i' (mis. '23 Sep 2026 14:05'). */
+  /** formatDateTimeID (mis. '23 September 2026, 14.05'). */
   proofUploadedAt: string | null
   paidAt: string | null
   verifiedBy: string | null
   customer: { name: string; email: string | null; phone: string | null }
   type: 'booking' | 'membership'
-  /** booking: { facility, unit, date ('d M Y'), time ('HH:MM - HH:MM'), status } · membership: { plan }. */
+  /**
+   * booking: { facility, unit, date ('Senin, 19 Oktober 2026'), time ('HH:MM - HH:MM'), status, package, sessions }
+   * · membership: { plan }. Paket: `package` = 'Paket 2 sesi', `sessions` = satu baris per sesi urut tanggal,
+   * dipisah '\n'. Booking tunggal: keduanya null.
+   */
   subject: Record<string, string | null>
 }
 

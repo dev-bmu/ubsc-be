@@ -12,6 +12,7 @@ import { approve, attachProof, DEFAULT_UNIQUE_CODE_MAX, expire, reject, uniqueCo
 import { createMembership } from '../src/services/membership-services'
 import { removeQrisImage, updatePaymentSettings, uploadQrisImage } from '../src/services/payment-admin-services'
 import { paymentDetail } from '../src/services/payment-services'
+import { paymentApprovedTemplate } from '../src/utils/mail-templates'
 import { addMinutes, jakartaWallTimeToUtc, setNowForTests } from '../src/utils/clock'
 import {
   closeDatabase,
@@ -186,6 +187,16 @@ describe('approve & reject', () => {
     const decision = await approve(transactionId, staffId)
 
     expect(decision.booking?.id).toBe(bookingId)
+    // Email "Pembayaran dikonfirmasi" menyebut SEMUA sesi paket, urut tanggal — dulu hanya lead.
+    const mail = paymentApprovedTemplate({ to: 'x@y.z', receiptNumber: decision.invoiceNumber, amount: decision.total, booking: { ...decision.booking!, url: 'u' } })
+    const dates = ['Selasa, 6 Oktober 2026', 'Kamis, 8 Oktober 2026', 'Selasa, 13 Oktober 2026']
+    for (const body of [mail.html, mail.text]) {
+      const at = dates.map((d) => body.indexOf(d))
+      expect(at).not.toContain(-1)
+      expect(at).toEqual([...at].sort((a, b) => a - b))
+      expect(body).toMatch(/paket 3 sesi/i)
+    }
+    expect(mail.text).toContain('Sesi 3 dari 3: Selasa, 13 Oktober 2026 · 18:00 – 19:00')
     const group = await groupOf(bookingId)
     group.forEach((b) => expect(b).toMatchObject({ status: 'confirmed', holdExpiresAt: null }))
     const transaction = await prismaClient.transaction.findUniqueOrThrow({ where: { id: transactionId } })

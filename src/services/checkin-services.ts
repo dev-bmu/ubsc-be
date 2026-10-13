@@ -3,7 +3,8 @@ import type { CheckInDetailDto, CheckInIndexDto, DeskBookingDto } from '../../sh
 import { prismaClient } from '../application/database'
 import { checkInUrl } from './payment-services'
 import { ResponseError } from '../error/response-error'
-import { dateOnly, dateOnlyToString, formatInstant, jakartaDate, now, translatedDate } from '../utils/clock'
+import { formatDateTimeID } from '../../shared/format'
+import { dateOnly, dateOnlyToString, jakartaDate, now, translatedDate } from '../utils/clock'
 
 import { BookingAdminValidation } from '../validation/booking-admin-validation'
 import { Validation } from '../validation/Validation'
@@ -46,13 +47,13 @@ function presentBase(b: CheckInRow) {
     },
     facility: b.facility?.name ?? '-',
     unit: b.facilityUnit?.name ?? null,
-    date: translatedDate(dateOnlyToString(b.bookingDate), 'l, d F Y'),
+    date: translatedDate(dateOnlyToString(b.bookingDate), 'l, j F Y'),
     isToday: dateOnlyToString(b.bookingDate) === jakartaDate(),
     time: `${b.startTime.slice(0, 5)} – ${b.endTime.slice(0, 5)}`,
     status: b.status,
     paymentStatus: tx?.paymentStatus ?? 'UNPAID',
     amount: tx?.amount ?? b.subtotalPrice,
-    checkedInAt: b.checkedInAt ? formatInstant(b.checkedInAt, 'd M Y H:i') : null,
+    checkedInAt: b.checkedInAt ? formatDateTimeID(b.checkedInAt) : null,
     checkedInBy: b.checkedInBy?.name ?? null
   }
 }
@@ -106,7 +107,7 @@ export async function checkInIndex(query: unknown): Promise<CheckInIndexDto> {
   return {
     bookings: sorted.map(presentDesk),
     search: q,
-    today: translatedDate(jakartaDate(), 'l, d F Y')
+    today: translatedDate(jakartaDate(), 'l, j F Y')
   }
 }
 
@@ -132,7 +133,7 @@ export async function checkInStore(token: string, staffId: string): Promise<Chec
   const booking = await findByToken(token)
 
   if (booking.checkedInAt) {
-    throw new ResponseError(409, `Booking ini sudah check-in pada ${formatInstant(booking.checkedInAt, 'd M Y H:i')}.`, 'CONFLICT')
+    throw new ResponseError(409, `Booking ini sudah check-in pada ${formatDateTimeID(booking.checkedInAt)}.`, 'CONFLICT')
   }
 
   await prismaClient.booking.update({ where: { id: booking.id }, data: { checkedInAt: now(), checkedInById: staffId } })
