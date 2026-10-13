@@ -1,5 +1,12 @@
 import { RequestHandler } from 'express'
-import { createAdminBooking, destroyBooking, listAdminBookings, updateBookingStatus } from '../services/booking-admin-services'
+import {
+  createAdminBooking,
+  destroyBooking,
+  listAdminBookings,
+  rescheduleBooking,
+  rescheduleOptions,
+  updateBookingStatus
+} from '../services/booking-admin-services'
 import { checkInIndex, checkInShow, checkInStore } from '../services/checkin-services'
 import { cancelSession, classRoster, restoreSession } from '../services/class-roster-services'
 import { requireUser } from '../utils/request-user'
@@ -38,6 +45,22 @@ export const bookingsUpdate: RequestHandler = async (req, res, next) => {
 export const bookingsDestroy: RequestHandler = async (req, res, next) => {
   try {
     ok(res, await destroyBooking(String(req.params.id)))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const bookingsRescheduleOptions: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await rescheduleOptions(String(req.params.id), req.query))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const bookingsReschedule: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await rescheduleBooking(String(req.params.id), req.body, requireUser(req).id))
   } catch (error) {
     next(error)
   }

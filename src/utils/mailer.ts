@@ -45,7 +45,8 @@ import { logger } from './logger'
 // kiriman gagal dari panel admin. Pengganti murah untuk queue, dan cukup pada
 // volume ini.
 
-export type MailTemplate = 'verify-email' | 'reset-password' | 'payment-approved' | 'payment-rejected' | 'membership-active' | 'membership-invoice'
+export type MailTemplate =
+  'verify-email' | 'reset-password' | 'payment-approved' | 'payment-rejected' | 'membership-active' | 'membership-invoice' | 'booking-rescheduled'
 
 export interface MailInput {
   to: string

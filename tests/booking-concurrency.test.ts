@@ -1,13 +1,17 @@
 import { prismaClient } from '../src/application/database'
 import { ResponseError } from '../src/error/response-error'
+import { rescheduleBooking } from '../src/services/booking-admin-services'
 import { createBooking } from '../src/services/booking-services'
-import { CODE_MIN, DEFAULT_UNIQUE_CODE_MAX } from '../src/services/manual-payment-services'
-import { setNowForTests } from '../src/utils/clock'
+import { cancelSession } from '../src/services/class-roster-services'
+import * as manualPayments from '../src/services/manual-payment-services'
+import { CODE_MIN, DEFAULT_UNIQUE_CODE_MAX, expire } from '../src/services/manual-payment-services'
+import { addMinutes, dateOnly, setNowForTests } from '../src/utils/clock'
 import {
   closeDatabase,
   configurePayments,
   createCustomer,
   createFacility,
+  createStaff,
   FROZEN_NOW,
   insertBooking,
   openMonth,
@@ -223,5 +227,127 @@ describe('kode unik pendingTotal di bawah balapan (R11)', () => {
     expect(late.rejected[0]).toMatchObject({ status: 409, code: 'PENDING_TOTAL_EXHAUSTED' })
     // Gagal bersih: tidak ada booking yatim tanpa transaksi.
     expect(await prismaClient.booking.count({ where: { facilityId: extra.id } })).toBe(0)
+  })
+})
+
+// ===== Pindah jadwal staff: kunci resource DULU, lalu transaksi, lalu grup =====
+
+describe('pindah jadwal di bawah balapan', () => {
+  const liveAt = (facilityId: string, date: string, startTime: string) =>
+    prismaClient.booking.count({ where: { facilityId, bookingDate: dateOnly(date), startTime, status: { in: ['pending', 'confirmed'] } } })
+
+  it('pindah jadwal vs booking pelanggan pada kursi terakhir: tepat satu menang', async () => {
+    const facility = await createFacility({ capacity: 1 })
+    const moving = await insertBooking({ facilityId: facility.id, date: '2026-10-15', startTime: '10:00', endTime: '11:00' })
+    const [staff, customer] = await Promise.all([createStaff('Staff Front Office'), createCustomer()])
+
+    const { fulfilled, rejected } = await settle<unknown>([
+      rescheduleBooking(moving.id, { bookingDate: '2026-10-16', startTime: '09:00' }, staff.id),
+      createBooking(customer, { facilityId: facility.id, bookingDate: '2026-10-16', startTime: '09:00', endTime: '10:00' })
+    ])
+
+    expect(fulfilled).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0]).toMatchObject({ status: 422, code: 'VALIDATION_ERROR' })
+    expect(await liveAt(facility.id, '2026-10-16', '09:00')).toBe(1)
+  })
+
+  it('dua pindah jadwal ke kursi terakhir yang sama: tepat satu menang, satu baris riwayat', async () => {
+    const facility = await createFacility({ capacity: 1 })
+    const a = await insertBooking({ facilityId: facility.id, date: '2026-10-17', startTime: '10:00', endTime: '11:00' })
+    const b = await insertBooking({ facilityId: facility.id, date: '2026-10-17', startTime: '12:00', endTime: '13:00' })
+    const staff = await createStaff('Staff Front Office')
+    const target = { bookingDate: '2026-10-18', startTime: '09:00' }
+
+    const { fulfilled, rejected } = await settle([rescheduleBooking(a.id, target, staff.id), rescheduleBooking(b.id, target, staff.id)])
+
+    expect(fulfilled).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0]).toMatchObject({ status: 422, fields: { startTime: ['Slot tujuan sudah penuh. Pilih jadwal lain.'] } })
+    expect(await liveAt(facility.id, '2026-10-18', '09:00')).toBe(1)
+    expect(await prismaClient.bookingReschedule.count({ where: { bookingId: { in: [a.id, b.id] } } })).toBe(1)
+  })
+
+  it('pindah jadwal vs expire pada hold yang baru lewat: booking batal, tanpa riwayat pindah', async () => {
+    const facility = await createFacility({ capacity: 1 })
+    const created = await createBooking(await createCustomer(), {
+      facilityId: facility.id,
+      bookingDate: '2026-10-19',
+      startTime: '10:00',
+      endTime: '11:00'
+    })
+    const staff = await createStaff('Staff Front Office')
+
+    // Hold 120 menit (configurePayments) baru saja lewat.
+    setNowForTests(addMinutes(FROZEN_NOW, 121))
+    try {
+      const { fulfilled, rejected } = await settle<unknown>([
+        rescheduleBooking(created.bookingId, { bookingDate: '2026-10-21', startTime: '10:00' }, staff.id),
+        expire(created.transactionId)
+      ])
+
+      expect(fulfilled).toEqual([true])
+      expect(rejected).toHaveLength(1)
+      expect((rejected[0] as ResponseError).status).toBe(409)
+    } finally {
+      setNowForTests(FROZEN_NOW)
+    }
+
+    const booking = await prismaClient.booking.findUniqueOrThrow({ where: { id: created.bookingId } })
+    expect(booking).toMatchObject({ status: 'cancelled', startTime: '10:00' })
+    expect(await prismaClient.bookingReschedule.count({ where: { bookingId: created.bookingId } })).toBe(0)
+  })
+
+  it('pindah jadwal vs batal sesi kelas tujuan: booking tidak pernah hidup di sesi yang dibatalkan', async () => {
+    const staff = await createStaff('Manager')
+
+    for (let round = 0; round < 5; round++) {
+      const facility = await createFacility({
+        mode: 'class',
+        activeSlots: { Tuesday: ['18:00'], Thursday: ['18:00'] },
+        units: [{ name: 'Grup A', capacity: 10 }]
+      })
+      const unitId = facility.units[0].id
+      const moving = await insertBooking({
+        facilityId: facility.id,
+        facilityUnitId: unitId,
+        date: '2026-10-20',
+        startTime: '18:00',
+        endTime: '19:00'
+      })
+
+      const { rejected } = await settle<unknown>([
+        rescheduleBooking(moving.id, { bookingDate: '2026-10-22', startTime: '18:00' }, staff.id),
+        cancelSession({ facilityId: facility.id, facilityUnitId: unitId, sessionDate: '2026-10-22', startTime: '18:00' }, staff.id)
+      ])
+
+      // Pindah duluan -> ikut dibatalkan sesinya. Batal duluan -> pindah ditolak (422 sesi dibatalkan).
+      rejected.forEach((reason) =>
+        expect(reason).toMatchObject({ status: 422, fields: { startTime: ['Sesi 22 Oktober 2026 18:00 sudah dibatalkan.'] } })
+      )
+      expect(await liveAt(facility.id, '2026-10-22', '18:00')).toBe(0)
+    }
+  })
+
+  it('booking pelanggan vs batal sesi yang commit setelah baca sesi batal tapi sebelum kunci: ditolak di bawah kunci', async () => {
+    const staff = await createStaff('Manager')
+    const facility = await createFacility({ mode: 'class', activeSlots: { Tuesday: ['18:00'] }, units: [{ name: 'Grup A', capacity: 10 }] })
+    const unitId = facility.units[0].id
+    const customer = await createCustomer()
+
+    // holdMinutes() dipanggil persis di jendela itu (setelah langkah 8, sebelum transaksi).
+    const realHoldMinutes = manualPayments.holdMinutes
+    const spy = jest.spyOn(manualPayments, 'holdMinutes').mockImplementation(async () => {
+      await cancelSession({ facilityId: facility.id, facilityUnitId: unitId, sessionDate: '2026-10-13', startTime: '18:00' }, staff.id)
+      return realHoldMinutes()
+    })
+    try {
+      await expect(
+        createBooking(customer, { facilityId: facility.id, facilityUnitId: unitId, bookingDate: '2026-10-13', startTime: '18:00', endTime: '19:00' })
+      ).rejects.toMatchObject({ status: 422, fields: { startTime: ['Sesi 13 Oktober 2026 sudah dibatalkan.'] } })
+    } finally {
+      spy.mockRestore()
+    }
+    expect(await liveAt(facility.id, '2026-10-13', '18:00')).toBe(0)
   })
 })

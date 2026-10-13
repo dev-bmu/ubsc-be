@@ -19,6 +19,8 @@ export const PERMISSIONS = {
   // Reservasi & Jadwal
   BOOKINGS_READ: 'bookings.read',
   BOOKINGS_MANAGE: 'bookings.manage',
+  // BARU (2026-10): pindah jadwal tanpa ikut membuka create/confirm/cancel milik bookings.manage.
+  BOOKINGS_RESCHEDULE: 'bookings.reschedule',
   BOOKINGS_LIMITS_MANAGE: 'bookings.limits.manage',
 
   // Fasilitas & Lapangan
@@ -91,6 +93,7 @@ export const ALL_PERMISSIONS: PermissionDefinition[] = [
   // ===== Reservasi & Jadwal =====
   { code: PERMISSIONS.BOOKINGS_READ, name: 'Lihat Reservasi', description: 'Melihat daftar dan detail reservasi, tanpa mengubah' },
   { code: PERMISSIONS.BOOKINGS_MANAGE, name: 'Kelola Reservasi', description: 'Membuat, mengubah, membatalkan reservasi, dan check-in' },
+  { code: PERMISSIONS.BOOKINGS_RESCHEDULE, name: 'Ubah Jadwal Reservasi', description: 'Memindahkan tanggal/jam/unit reservasi lapangan & kelas' },
   { code: PERMISSIONS.BOOKINGS_LIMITS_MANAGE, name: 'Kelola Batas Reservasi', description: 'Mengatur batas jadwal, kuota, dan tanggal tutup' },
 
   // ===== Fasilitas & Lapangan =====
@@ -158,13 +161,14 @@ export const ROLE_PERMISSIONS: Record<StaffRoleName, PermissionCode[]> = {
   'Staff Central': [
     PERMISSIONS.BOOKINGS_READ,
     PERMISSIONS.BOOKINGS_MANAGE,
+    PERMISSIONS.BOOKINGS_RESCHEDULE,
     PERMISSIONS.FACILITIES_READ,
     PERMISSIONS.CMS_MANAGE,
     PERMISSIONS.MEMBERS_READ,
     PERMISSIONS.GYM_CHECKIN
   ],
 
-  'Staff Front Office': [PERMISSIONS.BOOKINGS_READ, PERMISSIONS.IDENTITY_VERIFY, PERMISSIONS.GYM_CHECKIN]
+  'Staff Front Office': [PERMISSIONS.BOOKINGS_READ, PERMISSIONS.BOOKINGS_RESCHEDULE, PERMISSIONS.IDENTITY_VERIFY, PERMISSIONS.GYM_CHECKIN]
 }
 
 // ===== Helper =====

@@ -258,6 +258,7 @@ model User {
   gymCheckIns        GymVisit[]              @relation("GymVisitStaff")
   authoredNews       News[]
   sessionExceptions  ClassSessionException[]
+  bookingReschedules BookingReschedule[]     @relation("BookingRescheduleActor")
 
   @@index([roleId])
   @@index([identityStatus])
@@ -349,7 +350,7 @@ model EmailLog {
   id        String    @id @default(uuid())
   toEmail   String
   subject   String
-  template  String // verify-email | reset-password | payment-approved | payment-rejected | membership-active | membership-invoice
+  template  String // verify-email | reset-password | payment-approved | payment-rejected | membership-active | membership-invoice | booking-rescheduled
   status    String    @default("pending") // pending | sent | failed
   attempts  Int       @default(0)
   lastError String?   @db.Text
@@ -616,6 +617,7 @@ model Booking {
   updatedAt DateTime @updatedAt
 
   transaction Transaction?
+  reschedules BookingReschedule[]
 
   @@index([userId])
   @@index([facilityId, bookingDate])
@@ -649,6 +651,34 @@ model ClassSessionException {
   @@index([facilityId, sessionDate])
   @@index([createdById])
   @@map("class_session_exceptions")
+}
+
+// Satu baris = satu kali staff memindahkan jadwal booking (tanggal/jam/unit). Harga, transaksi, dan
+// token check-in tidak ikut berubah. Nama unit disimpan sebagai snapshot supaya riwayat tetap terbaca
+// bila unitnya kelak diganti nama atau dinonaktifkan. VarChar(150) = batas nama unit di facility-validation.
+model BookingReschedule {
+  id        String  @id @default(uuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id])
+  // null = akun staff pelakunya sudah dihapus (pola yang sama dengan Booking.checkedInById).
+  actorId   String?
+  actor     User?   @relation("BookingRescheduleActor", fields: [actorId], references: [id])
+
+  fromDate      DateTime @db.Date
+  fromStartTime String   @db.VarChar(5)
+  fromEndTime   String   @db.VarChar(5)
+  fromUnitName  String?  @db.VarChar(150)
+  toDate        DateTime @db.Date
+  toStartTime   String   @db.VarChar(5)
+  toEndTime     String   @db.VarChar(5)
+  toUnitName    String?  @db.VarChar(150)
+  reason        String?  @db.VarChar(160)
+
+  createdAt DateTime @default(now())
+
+  @@index([bookingId, createdAt])
+  @@index([actorId])
+  @@map("booking_reschedules")
 }
 
 // ============================================================================

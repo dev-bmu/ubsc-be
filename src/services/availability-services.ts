@@ -57,12 +57,43 @@ interface OccupiedRow {
  *
  * Bug 5 Rewrite.md: slots() Laravel menembak satu query okupansi per slot — sampai 16 query per render
  * grid, pada 120 permintaan/menit. Satu query per tanggal lalu dicocokkan di memori.
+ *
+ * `excludeId`: booking yang sedang dipindah jadwalnya tidak dihitung melawan dirinya sendiri — tanpa
+ * ini pindah 10-12 -> 11-13 di lapangan berkapasitas 1 ditolak oleh booking itu sendiri.
  */
-export async function blockingForDay(db: Db, facilityId: string, unitId: string | null, dateStr: string, at: Date = now()): Promise<OccupiedRow[]> {
+export async function blockingForDay(
+  db: Db,
+  facilityId: string,
+  unitId: string | null,
+  dateStr: string,
+  at: Date = now(),
+  excludeId?: string
+): Promise<OccupiedRow[]> {
   return db.booking.findMany({
-    where: { AND: [{ facilityId, bookingDate: dateOnly(dateStr) }, blocking(at), unitScope(unitId)] },
+    where: {
+      AND: [{ facilityId, bookingDate: dateOnly(dateStr) }, blocking(at), unitScope(unitId), excludeId ? { id: { not: excludeId } } : {}]
+    },
     select: { startTime: true, endTime: true, pax: true }
   })
+}
+
+/**
+ * Serialisasi setiap penulis okupansi pada resource ini SEBELUM membaca ketersediaan. Mengunci baris
+ * booking yang AKAN bertabrakan tidak cukup: bila belum ada booking yang tumpang tindih, tidak ada yang
+ * terkunci, dan dua request sama-sama membaca "kosong". Baris induk memberi mereka sesuatu yang nyata
+ * untuk mengantre — dan untuk paket, satu kunci mencakup semua sesinya.
+ *
+ * WAJIB statement pertama transaksi, SEBELUM kunci transaksi/grup (manual-payment-services): approve,
+ * reject, expire, dan attachProof tidak pernah mengambil kunci unit, jadi pemegang kunci transaksi/grup
+ * tidak pernah menunggu baris unit — urutan ini tidak bisa membentuk siklus.
+ *
+ * Serialisasinya per unit (atau per fasilitas bila tanpa unit). Cukup untuk volume ini; bila satu
+ * fasilitas suatu saat menanggung booking bersamaan yang padat, pindah ke satu baris per slot dengan
+ * unique index (unit, tanggal, jam mulai).
+ */
+export async function lockResource(tx: Prisma.TransactionClient, facilityId: string, unitId: string | null): Promise<void> {
+  if (unitId) await tx.$queryRaw`SELECT id FROM facility_units WHERE id = ${unitId} FOR UPDATE`
+  else await tx.$queryRaw`SELECT id FROM facilities WHERE id = ${facilityId} FOR UPDATE`
 }
 
 /** Pax yang tumpang tindih (setengah terbuka) dengan [start, end). */

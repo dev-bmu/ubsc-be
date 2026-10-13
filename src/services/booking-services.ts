@@ -35,6 +35,7 @@ import { Validation } from '../validation/Validation'
 import {
   blockingForDay,
   cancelledSessionKeys,
+  lockResource,
   occupiedPaxForMonth,
   occupiedPaxForSessions,
   ownSessionKeysForMonth,
@@ -342,7 +343,7 @@ function normaliseSessions(v: CreateBookingInput): PricedSession[] {
  * Mengecek "apakah jam awal" dan "apakah jam akhir" secara terpisah tidak cukup: fasilitas yang buka
  * 08:00-10:00 dan 13:00-15:00 akan menerima 09:00-14:00, menjual empat jam yang tidak pernah buka.
  */
-function contiguousSpan(ranges: Array<[string, string]>, startTime: string, endTime: string): { slots: number; reachesEnd: boolean } {
+export function contiguousSpan(ranges: Array<[string, string]>, startTime: string, endTime: string): { slots: number; reachesEnd: boolean } {
   let slots = 0
   let cursor = startTime
   // Urutan iterasi = urutan tersimpan, tidak diurutkan — sama seperti Laravel.
@@ -507,19 +508,17 @@ export async function createBooking(user: UserWithRelations, request: unknown): 
   // 11-12. Cek tabrakan yang aman terhadap race, lalu insert.
   return withConflictRetry(() =>
     prismaClient.$transaction(async (tx) => {
-      // Serialisasi setiap percobaan bersamaan pada resource ini SEBELUM membaca ketersediaan. Mengunci
-      // baris booking yang AKAN bertabrakan tidak cukup: bila belum ada booking yang tumpang tindih,
-      // tidak ada yang terkunci, dan dua request sama-sama membaca "kosong". Baris induk memberi mereka
-      // sesuatu yang nyata untuk mengantre — dan untuk paket, satu kunci mencakup semua sesinya.
-      //
-      // Serialisasinya per unit (atau per fasilitas bila tanpa unit). Cukup untuk volume ini; bila satu
-      // fasilitas suatu saat menanggung booking bersamaan yang padat, pindah ke satu baris per slot
-      // dengan unique index (unit, tanggal, jam mulai).
-      if (unit) {
-        await tx.$queryRaw`SELECT id FROM facility_units WHERE id = ${unit.id} FOR UPDATE`
-      } else {
-        await tx.$queryRaw`SELECT id FROM facilities WHERE id = ${facility.id} FOR UPDATE`
-      }
+      // Serialisasi setiap percobaan bersamaan pada resource ini SEBELUM membaca ketersediaan
+      // (alasannya di lockResource).
+      await lockResource(tx, facility.id, unitId)
+
+      // Dibaca ulang di bawah kunci: cancelSession mengambil kunci yang sama, jadi sesi yang dibatalkan
+      // di antara baca langkah 8 dan kunci ini tertangkap di sini, bukan mendarat sebagai booking hidup.
+      const cancelledNow = await cancelledSessionKeys(tx, unitId, year, month)
+      sessions.forEach((session, index) => {
+        if (cancelledNow.has(`${session.date} ${session.startTime}`))
+          throw fieldError(fieldFor(index), `Sesi ${translatedDate(session.date, 'd F Y')} sudah dibatalkan.`)
+      })
 
       const lockedAt = now()
       const occupied = await occupiedPaxForSessions(tx, facility.id, unitId, sessions, lockedAt)

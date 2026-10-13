@@ -41,6 +41,9 @@ const booleanField = z.preprocess(
   z.boolean({ error: 'Nilai tidak valid.' })
 )
 
+/** Alasan opsional staff (batal sesi, pindah jadwal) — batas kolom `reason` VarChar(160). */
+const reasonField = z.preprocess(blankToNull, z.string().trim().max(160, { error: 'Alasan maksimal 160 karakter.' }).nullish())
+
 /** `nullable|integer|min:1|max:9999`. Kosong -> undefined (service memakai default 1). */
 const paxField = z.preprocess(
   (v) => (v === '' || v === null || v === undefined ? undefined : v),
@@ -60,6 +63,11 @@ export class BookingAdminValidation {
       .trim()
       .min(1, { error: 'Nama pelanggan wajib diisi.' })
       .max(255, { error: 'Nama pelanggan maksimal 255 karakter.' }),
+    // Walk-in tidak punya email: nomor inilah yang dipakai FO saat jadwalnya dipindah.
+    customerPhone: z.preprocess(
+      blankToNull,
+      z.string({ error: 'Nomor HP harus berupa teks.' }).trim().max(20, { error: 'Nomor HP maksimal 20 karakter.' }).nullish()
+    ),
     facilityId: idField('Fasilitas wajib dipilih.'),
     facilityUnitId: optionalIdField,
     bookingDate: bookableDateField('Tanggal booking'),
@@ -71,6 +79,20 @@ export class BookingAdminValidation {
       blankToNull,
       z.string({ error: 'Catatan harus berupa teks.' }).trim().max(500, { error: 'Catatan maksimal 500 karakter.' }).nullish()
     )
+  })
+
+  /** PATCH /api/admin/bookings/:id/reschedule — durasi tetap, jam selesai dihitung server. Unit kosong = unit saat ini. */
+  static readonly RESCHEDULE = z.object({
+    bookingDate: bookableDateField('Tanggal booking'),
+    startTime: timeField('Jam mulai'),
+    facilityUnitId: optionalIdField,
+    reason: reasonField
+  })
+
+  /** GET /api/admin/bookings/:id/reschedule-options. Unit kosong = unit booking saat ini. */
+  static readonly RESCHEDULE_OPTIONS = z.object({
+    date: dateField('Tanggal'),
+    facilityUnitId: optionalIdField
   })
 
   /** PATCH /api/admin/bookings/:id — ubah status. */
@@ -97,7 +119,7 @@ export class BookingAdminValidation {
     facilityUnitId: idField('Unit wajib dipilih.'),
     sessionDate: dateField('Tanggal sesi'),
     startTime: timeField('Jam mulai'),
-    reason: z.preprocess(blankToNull, z.string().trim().max(160, { error: 'Alasan maksimal 160 karakter.' }).nullish())
+    reason: reasonField
   })
 
   /** POST /api/admin/classes/restore-session — buka kembali (tidak un-cancel booking lama). */

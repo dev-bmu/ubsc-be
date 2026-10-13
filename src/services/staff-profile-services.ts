@@ -313,10 +313,10 @@ export async function updateStaffPassword(userId: string, request: unknown): Pro
 //
 //   * Relasi WAJIB  -> Restrict. Hanya satu: News.authorId (String, non-null). Menghapus penulis yang
 //     punya artikel akan GAGAL dengan error Prisma mentah, bukan pesan yang bisa dibaca staff.
-//   * Relasi OPSIONAL -> SetNull, DIAM-DIAM. Ini yang berbahaya. Sepuluh kolom ikut dikosongkan tanpa
+//   * Relasi OPSIONAL -> SetNull, DIAM-DIAM. Ini yang berbahaya. Sebelas kolom ikut dikosongkan tanpa
 //     satu pun error: Transaction.verifiedById (siapa yang menyetujui pembayaran), Booking
 //     .checkedInById (siapa yang melakukan check-in), Membership.createdById, MembershipHistory
-//     .actorId, ClassSessionException.createdById — seluruh jejak audit — plus kepemilikan sisi
+//     .actorId, ClassSessionException.createdById, BookingReschedule.actorId — seluruh jejak audit — plus kepemilikan sisi
 //     pelanggan Booking.userId, Membership.userId, MembershipHistory.userId, Transaction.userId, dan
 //     Review.userId, yang berubah menjadi baris tanpa pemilik.
 //
@@ -343,6 +343,7 @@ async function accountReferences(userId: string): Promise<AccountReference[]> {
     createdMemberships,
     membershipActions,
     sessionExceptions,
+    reschedules,
     bookings,
     memberships,
     membershipHistory,
@@ -355,6 +356,7 @@ async function accountReferences(userId: string): Promise<AccountReference[]> {
     prismaClient.membership.count({ where: { createdById: userId } }),
     prismaClient.membershipHistory.count({ where: { actorId: userId } }),
     prismaClient.classSessionException.count({ where: { createdById: userId } }),
+    prismaClient.bookingReschedule.count({ where: { actorId: userId } }),
     prismaClient.booking.count({ where: { userId } }),
     prismaClient.membership.count({ where: { userId } }),
     prismaClient.membershipHistory.count({ where: { userId } }),
@@ -369,6 +371,7 @@ async function accountReferences(userId: string): Promise<AccountReference[]> {
     { label: 'membership yang dibuat', count: createdMemberships },
     { label: 'riwayat membership', count: membershipActions },
     { label: 'pembatalan sesi kelas', count: sessionExceptions },
+    { label: 'perubahan jadwal reservasi', count: reschedules },
     { label: 'reservasi', count: bookings },
     { label: 'membership', count: memberships },
     { label: 'riwayat membership sebagai subjek', count: membershipHistory },

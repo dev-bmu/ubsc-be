@@ -1017,6 +1017,63 @@ export interface AdminBookingDto {
   checkInUrl: string | null
   hasEnded: boolean
   transaction: BookingTransactionDto | null
+  /** Riwayat pindah jadwal oleh staff, terbaru dulu. */
+  reschedules: BookingRescheduleDto[]
+}
+
+/** Satu jadwal di riwayat pindah jadwal. date = 'YYYY-MM-DD', jam 'HH:mm'. */
+export interface BookingScheduleSnapshotDto {
+  date: string
+  startTime: string
+  endTime: string
+  unitName: string | null
+}
+
+/** Satu kali staff memindahkan jadwal booking. at = 'd M Y H:i' (WIB). by = nama staff (null bila akunnya sudah dihapus). */
+export interface BookingRescheduleDto {
+  at: string
+  by: string | null
+  from: BookingScheduleSnapshotDto
+  to: BookingScheduleSnapshotDto
+  reason: string | null
+}
+
+/**
+ * Status satu slot tujuan pindah jadwal. `cancelled` = pertemuan kelas yang dibatalkan staff;
+ * `full` diuji sebelum `past`, sama seperti SessionStatus.
+ */
+/** registered = pelanggan ini sudah punya kursi lain di sesi kelas itu (ditolak mutasi). */
+export type RescheduleSlotStatus = 'available' | 'full' | 'past' | 'cancelled' | 'registered'
+
+export interface RescheduleSlotDto {
+  startTime: string
+  /** startTime + durasi booking ASLI (bukan durasi slot fasilitas). */
+  endTime: string
+  /** Kursi tersisa, TIDAK menghitung booking yang sedang dipindah. */
+  remaining: number
+  capacity: number
+  status: RescheduleSlotStatus
+  /** true = jadwal booking saat ini (tanggal, jam, dan unit sama). */
+  current: boolean
+}
+
+/** GET /api/admin/bookings/:id/reschedule-options?date=YYYY-MM-DD&facilityUnitId= */
+export interface RescheduleOptionsDto {
+  closed: boolean
+  reason?: ClosedReason
+  /** true = fasilitas punya unit aktif dan belum ada yang dipilih; slots kosong. */
+  requiresUnit: boolean
+  durationMinutes: number
+  slots: RescheduleSlotDto[]
+}
+
+/** PATCH /api/admin/bookings/:id/reschedule */
+export interface AdminRescheduleResultDto {
+  id: string
+  /** true bila email pemberitahuan diantrekan (pelanggan terdaftar ber-email). Lihat PaymentDecisionDto.mailQueued. */
+  mailQueued: boolean
+  /** Nomor yang bisa dihubungi FO — terutama untuk walk-in, yang tidak menerima email. */
+  customerPhone: string | null
 }
 
 /** Opsi fasilitas untuk filter + form create. */

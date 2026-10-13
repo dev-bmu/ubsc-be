@@ -389,3 +389,43 @@ export function membershipInvoiceTemplate(input: { to: string; name: string; inv
     text: `Halo ${input.name},\n\nMembership Anda sudah didaftarkan petugas dan aktif setelah pembayaran diterima.\n\n${v.number}\n${v.item.name}\n${v.item.lines.join('\n')}\nTotal: ${rupiahPlain(v.total)}${bank}${v.payUrl ? `\n\nBayar / unggah bukti: ${v.payUrl}` : ''}\n\nTerima kasih,\n${MAIL_FROM_NAME}`
   }
 }
+
+// ===== 7. Jadwal reservasi dipindah staff =====
+// Dikirim setelah rescheduleBooking() commit, hanya untuk pelanggan terdaftar (walk-in dihubungi FO lewat
+// nomor di respons). Harga dan QR tidak berubah. Sesi paket tidak punya halaman bayar sendiri, jadi
+// tombolnya ke riwayat booking, bukan /booking/:id/pembayaran.
+
+export function bookingRescheduledTemplate(input: {
+  to: string
+  name: string
+  before: MailBooking
+  after: MailBooking
+  reason: string | null
+  url: string
+}): MailInput {
+  const line = (b: MailBooking) => {
+    const when = bookingWhen(b)
+    return `${when.date} · ${when.time}${b.unitName ? ` · ${b.unitName}` : ''}`
+  }
+  const before = line(input.before)
+  const after = line(input.after)
+  const facility = input.after.facilityName
+  const qr = 'QR check-in Anda tetap berlaku — tunjukkan QR yang sama kepada petugas saat datang.'
+
+  return {
+    to: input.to,
+    subject: `Jadwal reservasi Anda diubah – ${facility}`,
+    template: 'booking-rescheduled',
+    html: layout({
+      heading: 'Jadwal reservasi Anda diubah',
+      bodyHtml: `Halo ${escapeHtml(input.name)},<br><br>Petugas kami memindahkan jadwal reservasi <strong>${escapeHtml(facility)}</strong> Anda.<br><br>
+    Jadwal lama: <span style="text-decoration:line-through">${escapeHtml(before)}</span><br>
+    Jadwal baru: <strong>${escapeHtml(after)}</strong>${input.reason ? `<br><br><strong>Alasan:</strong> ${escapeHtml(input.reason)}` : ''}<br><br>
+    ${escapeHtml(qr)}`,
+      ctaLabel: 'Lihat Riwayat Booking',
+      ctaUrl: input.url,
+      footerNote: `Sampai jumpa di lapangan,<br>${escapeHtml(MAIL_FROM_NAME)}`
+    }),
+    text: `Halo ${input.name},\n\nPetugas kami memindahkan jadwal reservasi ${facility} Anda.\n\nJadwal lama: ${before}\nJadwal baru: ${after}${input.reason ? `\n\nAlasan: ${input.reason}` : ''}\n\n${qr}\n\nLihat riwayat booking: ${input.url}\n\nSampai jumpa di lapangan,\n${MAIL_FROM_NAME}`
+  }
+}

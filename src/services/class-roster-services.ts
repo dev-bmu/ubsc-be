@@ -8,7 +8,7 @@ import { addDays, dateOnly, dateOnlyToString, daysInMonth, formatInstant, jakart
 import { withConflictRetry } from '../utils/prisma-errors'
 import { BookingAdminValidation } from '../validation/booking-admin-validation'
 import { Validation } from '../validation/Validation'
-import { cancelledSessionKeys } from './availability-services'
+import { cancelledSessionKeys, lockResource } from './availability-services'
 import { FACILITY_WITH_PRICING, FacilityWithPricing, UnitWithPrices } from './pricing-services'
 import { capacityFor, cleanClosedDatesForMonth, timeRangesFor } from './schedule-services'
 
@@ -208,6 +208,10 @@ export async function cancelSession(request: unknown, staffId: string): Promise<
 
   return withConflictRetry(() =>
     prismaClient.$transaction(async (tx) => {
+      // Kunci unit yang sama dengan createBooking/rescheduleBooking (keduanya membaca ulang sesi batal di
+      // bawah kunci ini): tanpa ini booking baru atau pindah jadwal bisa mendarat hidup di sesi yang sedang dibatalkan.
+      await lockResource(tx, v.facilityId, v.facilityUnitId)
+
       // Cancel sesi yang sudah dibatalkan = perbarui catatan (upsert), bukan bentrok unique index.
       await tx.classSessionException.upsert({
         where: { facilityUnitId_sessionDate_startTime: { facilityUnitId: v.facilityUnitId, sessionDate, startTime: v.startTime } },
