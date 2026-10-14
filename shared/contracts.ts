@@ -1366,6 +1366,8 @@ export interface PaymentSettingsDto {
   uniqueCodeMax: number
   /** Kode akun Kas/Bank Accurate untuk export Penerimaan Penjualan; '' = belum diisi. */
   accurateCashAccountNo: string
+  /** Nomor barang/jasa Accurate untuk baris kode unik export Faktur Penjualan; '' = belum diisi. */
+  accurateUniqueCodeItemNo: string
 }
 
 /**
@@ -1392,6 +1394,8 @@ export interface PaymentSettingsPayload {
   uniqueCodeMax: number
   /** Maks 30 karakter; '' boleh (export Penerimaan Penjualan lalu ditolak sampai diisi). */
   accurateCashAccountNo: string
+  /** Maks 30 karakter; '' boleh (export Faktur Penjualan lalu ditolak bila ada transaksi berkode unik). */
+  accurateUniqueCodeItemNo: string
 }
 
 /**

@@ -13,7 +13,7 @@ import { paginationMeta } from '../utils/respond'
 import { deleteObjects, ownedPublicKey, publicUrl, putObject } from '../utils/storage'
 import { PaymentValidation } from '../validation/payment-validation'
 import { Validation } from '../validation/Validation'
-import { accurateCashAccountNo, bankAccount, holdMinutes, qrisSetting, uniqueCodeMax } from './manual-payment-services'
+import { accurateCashAccountNo, accurateUniqueCodeItemNo, bankAccount, holdMinutes, qrisSetting, uniqueCodeMax } from './manual-payment-services'
 
 // ============================================================================
 // === Antrean verifikasi + pengaturan rekening — port Admin\PaymentVerificationController ===
@@ -189,14 +189,15 @@ export async function listPaymentQueue(query: unknown): Promise<{ data: AdminPay
 
 /** Keadaan pengaturan, dibaca lewat helper yang sama dengan jalur pelanggan. */
 async function paymentSettings(): Promise<PaymentSettingsDto> {
-  const [bank, qris, hold, codeMax, cashAccount] = await Promise.all([
+  const [bank, qris, hold, codeMax, cashAccount, codeItem] = await Promise.all([
     bankAccount(),
     qrisSetting(),
     holdMinutes(),
     uniqueCodeMax(),
-    accurateCashAccountNo()
+    accurateCashAccountNo(),
+    accurateUniqueCodeItemNo()
   ])
-  return { bank, qris, holdMinutes: hold, uniqueCodeMax: codeMax, accurateCashAccountNo: cashAccount }
+  return { bank, qris, holdMinutes: hold, uniqueCodeMax: codeMax, accurateCashAccountNo: cashAccount, accurateUniqueCodeItemNo: codeItem }
 }
 
 // ===== 2. Pengaturan rekening, durasi hold, kode unik =====
@@ -219,7 +220,8 @@ export async function updatePaymentSettings(request: unknown): Promise<PaymentSe
     ['payment_qris_merchant', v.qrisMerchantName],
     ['payment_hold_minutes', String(v.holdMinutes)],
     ['payment_unique_code_max', String(v.uniqueCodeMax)],
-    ['accurate_cash_account_no', v.accurateCashAccountNo]
+    ['accurate_cash_account_no', v.accurateCashAccountNo],
+    ['accurate_unique_code_item_no', v.accurateUniqueCodeItemNo]
   ]
   await prismaClient.$transaction(
     entries.map(([key, value]) => prismaClient.systemSetting.upsert({ where: { key }, create: { key, value }, update: { value } })),

@@ -4,6 +4,7 @@ import { inflateRawSync } from 'zlib'
 import { prismaClient } from '../src/application/database'
 import { web } from '../src/application/web'
 import { accurateCustomerExport, accurateInvoiceExport, accurateReceiptExport, ACCURATE_BRANCH } from '../src/services/accurate-export-services'
+import { createBooking } from '../src/services/booking-services'
 import { createMembership } from '../src/services/membership-services'
 import { createCustomerAccount } from '../src/services/membership-admin-services'
 import {
@@ -16,7 +17,17 @@ import {
 import { addDays, jakartaDate, jakartaWallTimeToUtc, setNowForTests } from '../src/utils/clock'
 import { accurateCustomerId, customerNumber } from '../src/utils/money'
 import { createRefreshToken, hashToken } from '../src/utils/token'
-import { bearer, closeDatabase, createCustomer, createStaff, FROZEN_NOW, resetDatabase } from './helpers/fixtures'
+import {
+  bearer,
+  closeDatabase,
+  configurePayments,
+  createCustomer,
+  createFacility,
+  createStaff,
+  FROZEN_NOW,
+  openMonth,
+  resetDatabase
+} from './helpers/fixtures'
 
 // ============================================================================
 // === Export Accurate (.xlsx) + jeda kirim ulang verifikasi — catatan client 2026-09-28 ===
@@ -49,6 +60,46 @@ function readSheet(buffer: Buffer): Record<string, string> {
   return cells
 }
 
+/** Kolom kepala faktur (CUSTOMER NO .. SUB COMPANY CODE = A..AT); ITEM:ITEM NO mulai di AU. */
+const HEAD_COLUMNS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ', ...Array.from('ABCDEFGHIJKLMNOPQRST', (c) => `A${c}`)]
+
+interface InvoiceLine {
+  itemNo: string
+  price: number
+  name: string
+  notes: string
+}
+
+/**
+ * Kelompokkan sheet faktur per faktur: baris ber-CUSTOMER NO membuka faktur, baris lanjutan menambah
+ * item dan TIDAK boleh membawa satu pun kolom kepala (format multi-item impor Accurate).
+ */
+function invoicesOf(sheet: Record<string, string>): Array<{ row: number; number: string; lines: InvoiceLine[] }> {
+  const invoices: Array<{ row: number; number: string; lines: InvoiceLine[] }> = []
+  for (let r = 2; sheet[`AU${r}`] !== undefined; r++) {
+    expect(sheet[`AV${r}`]).toBe('1')
+    const line = { itemNo: sheet[`AU${r}`], price: Number(sheet[`AW${r}`]), name: sheet[`AZ${r}`], notes: sheet[`BC${r}`] }
+    if (sheet[`A${r}`] !== undefined) invoices.push({ row: r, number: sheet[`B${r}`], lines: [line] })
+    else {
+      expect(HEAD_COLUMNS.filter((column) => sheet[`${column}${r}`] !== undefined)).toEqual([])
+      invoices[invoices.length - 1].lines.push(line)
+    }
+  }
+  return invoices
+}
+
+const sumOf = (lines: InvoiceLine[]) => lines.reduce((sum, line) => sum + line.price, 0)
+const totalOf = (t: { amount: number; adminFee: number; uniqueCode: number | null }) => t.amount + t.adminFee + (t.uniqueCode ?? 0)
+
+/** Nomor barang/jasa kode unik di Accurate (setting accurate_unique_code_item_no). */
+const CODE_ITEM = 'UBSC-KODEUNIK'
+const codeLine = (t: { invoiceNumber: string; uniqueCode: number | null }, notes = `Kode unik transfer ${t.invoiceNumber}`) => ({
+  itemNo: CODE_ITEM,
+  price: t.uniqueCode,
+  name: 'Kode Unik Transfer',
+  notes
+})
+
 let planId: string
 /** Hari transaksi dibuat (WIB), diisi test pertama. */
 let day: string
@@ -56,6 +107,7 @@ let day: string
 beforeAll(async () => {
   await resetDatabase()
   setNowForTests(FROZEN_NOW)
+  await prismaClient.systemSetting.create({ data: { key: 'accurate_unique_code_item_no', value: CODE_ITEM } })
   planId = (
     await prismaClient.membershipPlan.create({
       data: {
@@ -73,7 +125,7 @@ beforeAll(async () => {
 afterAll(closeDatabase)
 
 describe('export Accurate', () => {
-  it('faktur + pelanggan untuk transaksi hari itu: ID WEB berurutan, walk-in ke pelanggan umum, satu baris seharga total', async () => {
+  it('faktur + pelanggan untuk transaksi hari itu: ID WEB berurutan, walk-in ke pelanggan umum, baris barang + baris kode unik', async () => {
     const early = await createCustomer()
     await prismaClient.user.update({ where: { id: early.id }, data: { createdAt: new Date('2026-01-01T00:00:00Z') } })
     const late = await createCustomer()
@@ -99,9 +151,9 @@ describe('export Accurate', () => {
     day = jakartaDate(t2.createdAt)
 
     // Walk-in tanpa paket memakai item membership umum.
-    const invoices = await accurateInvoiceExport({ from: day })
-    expect(invoices.filename).toBe(`accurate-faktur-${day}.xlsx`)
-    const sheet = readSheet(invoices.buffer)
+    const file = await accurateInvoiceExport({ from: day })
+    expect(file.filename).toBe(`accurate-faktur-${day}.xlsx`)
+    const sheet = readSheet(file.buffer)
     expect([sheet.A1, sheet.B1, sheet.C1, sheet.D1, sheet.AU1, sheet.AY1]).toEqual([
       'CUSTOMER NO',
       'NUMBER',
@@ -112,31 +164,36 @@ describe('export Accurate', () => {
     ])
 
     const [y, m, d] = day.split('-').map(Number)
-    const totalOf = async (membershipId: string) => {
-      const t = await transactionOf(membershipId)
-      return String(t.amount + t.adminFee + (t.uniqueCode ?? 0))
-    }
-    // Satu baris per faktur seharga total transfer (harga + kode unik), tanpa baris terpisah.
+    const [t1, tWalkIn, tWarga] = await Promise.all([first.id, walkIn.id, wargaMembership.id].map(transactionOf))
+    const invoices = invoicesOf(sheet)
+    expect(invoices.map((invoice) => invoice.number)).toEqual([t2.invoiceNumber, t1.invoiceNumber, tWalkIn.invoiceNumber, tWarga.invoiceNumber])
     expect(sheet).toMatchObject({
       A2: 'WEB.0002',
       B2: t2.invoiceNumber,
       C2: ACCURATE_BRANCH,
-      D2: String((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86_400_000), // nomor seri tanggal Excel
-      AU2: 'GYM-1B',
-      AV2: '1',
-      AW2: await totalOf(second.id)
+      D2: String((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86_400_000) // nomor seri tanggal Excel
     })
-    expect(sheet.BC2).toContain(`kode unik Rp ${t2.uniqueCode}`)
-    // Tanpa biaya admin (2026-10-08): rinciannya tidak menyebut admin.
-    expect(sheet.BC2).not.toContain('admin')
     expect(sheet.L2).toContain('(belum lunas)')
-    expect(sheet).toMatchObject({ A3: 'WEB.0001', AW3: await totalOf(first.id) })
+    // Membership = satu baris barang seharga paket + satu baris kode unik; jumlahnya = total transfer.
+    expect(invoices[0].lines).toEqual([
+      { itemNo: 'GYM-1B', price: 200_000, name: 'Membership Gym Accurate', notes: expect.stringContaining(customerNumber(late.customerSequence)) },
+      codeLine(t2)
+    ])
+    for (const [invoice, t] of [
+      [invoices[0], t2],
+      [invoices[1], t1],
+      [invoices[2], tWalkIn],
+      [invoices[3], tWarga]
+    ] as const) {
+      expect(sumOf(invoice.lines)).toBe(totalOf(t))
+      expect(invoice.lines[1]).toEqual(codeLine(t))
+    }
+    expect(sheet[`A${invoices[1].row}`]).toBe('WEB.0001')
     // Walk-in tanpa paket: pelanggan umum + item membership umum.
-    expect(sheet).toMatchObject({ A4: 'WEB.0000', AU4: 'UBSC-MEMBERSHIP', AW4: await totalOf(walkIn.id) })
-    expect(sheet.L4).toContain('Pak Andi')
-    expect(sheet).toMatchObject({ A5: 'WEB.0003', AU5: 'GYM-1B-W', AW5: await totalOf(wargaMembership.id) })
-    expect(sheet.A6).toBeUndefined()
-    expect(sheet.AU6).toBeUndefined()
+    expect(sheet).toMatchObject({ [`A${invoices[2].row}`]: 'WEB.0000', [`AU${invoices[2].row}`]: 'UBSC-MEMBERSHIP' })
+    expect(sheet[`L${invoices[2].row}`]).toContain('Pak Andi')
+    expect(sheet).toMatchObject({ [`A${invoices[3].row}`]: 'WEB.0003', [`AU${invoices[3].row}`]: 'GYM-1B-W' })
+    expect(sheet[`A${invoices[3].row + 2}`]).toBeUndefined()
 
     const customers = readSheet((await accurateCustomerExport({ from: day, to: day })).buffer)
     expect([customers.A1, customers.B1, customers.C1, customers.CL1]).toEqual(['Kategori', 'ID Pelanggan', 'Nama', 'Gudang Default'])
@@ -162,6 +219,128 @@ describe('export Accurate', () => {
       issues: [expect.objectContaining({ path: ['to'], message: 'Rentang export maksimal 31 hari.' })]
     })
   })
+
+  it('satu baris per sesi (paket kelas 5 sesi = 5 baris) + baris kode unik; total = penerimaan (catatan client 2026-10-14)', async () => {
+    // Hari tersendiri supaya faktur di sini tidak bercampur dengan transaksi test lain.
+    const other = addDays(day, 10)
+    await configurePayments()
+    await openMonth(2026, 11)
+    // Senin 14:00 November 2026 = 2, 9, 16, 23, 30. Paket 140.001 / 5 sesi tidak bulat: sisa 1 di sesi pertama.
+    const classFacility = await createFacility({
+      mode: 'class',
+      capacity: 10,
+      price: 30_000,
+      packagePrice: 140_001,
+      activeSlots: { Monday: ['14:00'] }
+    })
+    const court = await createFacility({ price: 50_000, units: [{ name: 'Lapangan A' }] })
+    await prismaClient.facility.update({ where: { id: classFacility.id }, data: { accurateItemNo: '3002', accurateItemNoWarga: '3002-W' } })
+    await prismaClient.facility.update({ where: { id: court.id }, data: { accurateItemNo: 'LAP-1', accurateItemNoWarga: 'LAP-1-W' } })
+
+    const customer = await createCustomer()
+    const mondays = ['2026-11-02', '2026-11-09', '2026-11-16', '2026-11-23', '2026-11-30']
+    const pkg = await createBooking(customer, {
+      facilityId: classFacility.id,
+      sessions: mondays.map((date) => ({ date, startTime: '14:00', endTime: '15:00' }))
+    })
+    const single = await createBooking(customer, {
+      facilityId: court.id,
+      facilityUnitId: court.units[0].id,
+      bookingDate: '2026-11-03',
+      startTime: '10:00',
+      endTime: '11:00'
+    })
+    // Sesi yang belakangan dibatalkan tetap ditagih di faktur.
+    await prismaClient.booking.updateMany({
+      where: { bookingGroupId: pkg.bookingId, bookingDate: new Date('2026-11-16') },
+      data: { status: 'cancelled' }
+    })
+    // Transaksi lama: biaya admin (dihapus 2026-10-08) ikut baris kode unik; tanpa kode unik = tanpa baris kode unik.
+    const legacy = await createMembership({ customerName: 'Bu Lama', startDate: '2026-10-05', endDate: '2026-11-05', amount: 150_000 })
+    const noCode = await createMembership({ customerName: 'Pak Tunai', startDate: '2026-10-05', endDate: '2026-11-05', amount: 120_000 })
+    const at = (hm: string) => jakartaWallTimeToUtc(other, hm)
+    await prismaClient.transaction.update({ where: { id: pkg.transactionId }, data: { createdAt: at('08:00') } })
+    await prismaClient.transaction.update({ where: { id: single.transactionId }, data: { createdAt: at('08:01') } })
+    await prismaClient.transaction.update({ where: { membershipId: legacy.id }, data: { createdAt: at('08:02'), adminFee: 2_500 } })
+    await prismaClient.transaction.update({
+      where: { membershipId: noCode.id },
+      data: { createdAt: at('08:03'), uniqueCode: null, pendingTotal: null }
+    })
+    const [tPkg, tSingle, tLegacy, tNoCode] = await Promise.all([
+      prismaClient.transaction.findUniqueOrThrow({ where: { id: pkg.transactionId } }),
+      prismaClient.transaction.findUniqueOrThrow({ where: { id: single.transactionId } }),
+      prismaClient.transaction.findUniqueOrThrow({ where: { membershipId: legacy.id } }),
+      prismaClient.transaction.findUniqueOrThrow({ where: { membershipId: noCode.id } })
+    ])
+    expect(tPkg.amount).toBe(140_001)
+
+    const sheet = readSheet((await accurateInvoiceExport({ from: other })).buffer)
+    const invoices = invoicesOf(sheet)
+    expect(invoices.map((invoice) => invoice.number)).toEqual([
+      tPkg.invoiceNumber,
+      tSingle.invoiceNumber,
+      tLegacy.invoiceNumber,
+      tNoCode.invoiceNumber
+    ])
+
+    // Paket: 5 baris sesi urut tanggal, harga = subtotalPrice per sesi (jumlah = harga paket), lalu kode unik.
+    const name = classFacility.name
+    expect(invoices[0].lines).toEqual([
+      { itemNo: '3002', price: 28_001, name, notes: '02/11/2026 14:00-15:00' },
+      { itemNo: '3002', price: 28_000, name, notes: '09/11/2026 14:00-15:00' },
+      { itemNo: '3002', price: 28_000, name, notes: '16/11/2026 14:00-15:00' },
+      { itemNo: '3002', price: 28_000, name, notes: '23/11/2026 14:00-15:00' },
+      { itemNo: '3002', price: 28_000, name, notes: '30/11/2026 14:00-15:00' },
+      codeLine(tPkg)
+    ])
+    expect(sumOf(invoices[0].lines)).toBe(totalOf(tPkg))
+    expect(sheet[`L${invoices[0].row}`]).toBe(`${name} - ${customer.name} (belum lunas)`)
+    // Lapangan: satu baris (dengan unit) + kode unik.
+    expect(invoices[1].lines).toEqual([
+      { itemNo: 'LAP-1', price: 50_000, name: court.name, notes: '03/11/2026 10:00-11:00 · Lapangan A' },
+      codeLine(tSingle)
+    ])
+    expect(sumOf(invoices[1].lines)).toBe(totalOf(tSingle))
+    expect(invoices[2].lines).toEqual([
+      expect.objectContaining({ itemNo: 'UBSC-MEMBERSHIP', price: 150_000 }),
+      {
+        ...codeLine(tLegacy, `Kode unik transfer ${tLegacy.invoiceNumber} (termasuk biaya admin lama Rp 2.500)`),
+        price: (tLegacy.uniqueCode ?? 0) + 2_500
+      }
+    ])
+    expect(sumOf(invoices[2].lines)).toBe(totalOf(tLegacy))
+    expect(invoices[3].lines).toEqual([expect.objectContaining({ itemNo: 'UBSC-MEMBERSHIP', price: 120_000 })])
+
+    // Data lama berharga per sesi (jumlah subtotal ≠ amount): dibagi rata ulang dari amount, sisa di baris terakhir.
+    await prismaClient.booking.updateMany({ where: { bookingGroupId: pkg.bookingId }, data: { subtotalPrice: 30_000 } })
+    const resplit = invoicesOf(readSheet((await accurateInvoiceExport({ from: other })).buffer))[0].lines.map((line) => line.price)
+    expect(resplit).toEqual([28_000, 28_000, 28_000, 28_000, 28_001, tPkg.uniqueCode])
+
+    // Penerimaan seimbang dengan faktur: PAYMENT VALUE = jumlah baris faktur.
+    await prismaClient.transaction.update({
+      where: { id: pkg.transactionId },
+      data: { paymentStatus: 'PAID', pendingTotal: null, paidAt: at('10:00') }
+    })
+    await prismaClient.systemSetting.create({ data: { key: 'accurate_cash_account_no', value: '1101-001' } })
+    try {
+      const receipt = readSheet((await accurateReceiptExport({ from: other })).buffer)
+      expect(receipt).toMatchObject({ H2: tPkg.invoiceNumber, G2: String(sumOf(invoices[0].lines)), I2: String(sumOf(invoices[0].lines)) })
+    } finally {
+      await prismaClient.systemSetting.delete({ where: { key: 'accurate_cash_account_no' } })
+    }
+
+    // Nomor item kode unik kosong = export faktur ditolak dengan petunjuk letak pengaturannya.
+    await prismaClient.systemSetting.update({ where: { key: 'accurate_unique_code_item_no' }, data: { value: ' ' } })
+    try {
+      await expect(accurateInvoiceExport({ from: other })).rejects.toMatchObject({
+        status: 422,
+        message: 'Nomor item Kode Unik Accurate belum diisi. Isi di menu Pembayaran > Pengaturan Pembayaran.',
+        fields: { accurateUniqueCodeItemNo: [expect.any(String)] }
+      })
+    } finally {
+      await prismaClient.systemSetting.update({ where: { key: 'accurate_unique_code_item_no' }, data: { value: CODE_ITEM } })
+    }
+  })
 })
 
 describe('penerimaan penjualan', () => {
@@ -175,14 +354,18 @@ describe('penerimaan penjualan', () => {
 
     const finance = bearer(await createStaff('Finance'), 'staff')
     const settings = { bankName: '', accountNumber: '', accountHolder: '', qrisMerchantName: '', holdMinutes: 120, uniqueCodeMax: 999 }
-    const post = (accurateCashAccountNo: string) =>
+    const post = (accurateCashAccountNo: string, accurateUniqueCodeItemNo = ` ${CODE_ITEM} `) =>
       request(web)
         .post('/api/admin/payments/settings')
         .set('Authorization', finance)
-        .send({ ...settings, accurateCashAccountNo })
+        .send({ ...settings, accurateCashAccountNo, accurateUniqueCodeItemNo })
     await post('9'.repeat(31)).expect(400)
-    expect((await post(` ${ACCOUNT} `).expect(200)).body.data.accurateCashAccountNo).toBe(ACCOUNT)
-    expect((await request(web).get('/api/admin/payments').set('Authorization', finance).expect(200)).body.data.accurateCashAccountNo).toBe(ACCOUNT)
+    await post(ACCOUNT, '9'.repeat(31)).expect(400)
+    expect((await post(` ${ACCOUNT} `).expect(200)).body.data).toMatchObject({ accurateCashAccountNo: ACCOUNT, accurateUniqueCodeItemNo: CODE_ITEM })
+    expect((await request(web).get('/api/admin/payments').set('Authorization', finance).expect(200)).body.data).toMatchObject({
+      accurateCashAccountNo: ACCOUNT,
+      accurateUniqueCodeItemNo: CODE_ITEM
+    })
   })
 
   it('satu penerimaan per transaksi yang LUNAS di rentang itu, termasuk faktur yang dibuat sebelumnya', async () => {

@@ -7,7 +7,7 @@ import { accurateCustomerId, customerNumber, rupiahPlain, transferTotal } from '
 import { buildXlsx, XlsxCell } from '../utils/xlsx'
 import { AccurateExportValidation } from '../validation/accurate-export-validation'
 import { Validation } from '../validation/Validation'
-import { accurateCashAccountNo } from './manual-payment-services'
+import { accurateCashAccountNo, accurateUniqueCodeItemNo } from './manual-payment-services'
 
 // ============================================================================
 // === Export Excel untuk Accurate (PRD tambahan 2026-09, bagian 6; catatan client 2026-09-28) ===
@@ -18,9 +18,12 @@ import { accurateCashAccountNo } from './manual-payment-services'
 //   2. Faktur     — "Template" faktur penjualan: setiap transaksi yang DIBUAT di rentang itu, lunas
 //                   maupun belum (keputusan client). Satu transaksi = satu faktur bernomor invoice
 //                   UBSC (mencegah impor ganda, dan jadi rujukan PAYMENT NUMBER penerimaan).
-//                   SATU baris item per faktur seharga total transfer (harga + kode unik, + biaya
-//                   admin pada transaksi sebelum 2026-10-08) — client tidak mau keduanya jadi baris
-//                   item terpisah.
+//                   Baris item (catatan client 2026-10-14, membalik keputusan "satu baris" 2026-09-28):
+//                   satu baris per sesi booking (paket kelas 5 sesi = 5 baris, harga per sesi),
+//                   membership satu baris, lalu satu baris "Kode Unik Transfer" (item dari setting
+//                   `accurate_unique_code_item_no`). Jumlah baris = total transfer, sama dengan
+//                   PAYMENT VALUE penerimaan. Baris pertama membawa kolom kepala faktur; baris
+//                   lanjutan hanya kolom ITEM:* (format multi-item impor Accurate).
 //   3. Penerimaan — "Template" penerimaan penjualan (pelunasan): setiap transaksi yang LUNAS (paidAt)
 //                   di rentang itu, termasuk yang fakturnya dibuat sebelum rentang. Satu penerimaan
 //                   per faktur, nomor `PP-<invoice>` (impor ulang ditolak Accurate), akun Kas/Bank dari
@@ -98,6 +101,15 @@ function templateRow(header: string[], values: Record<string, XlsxCell>): XlsxCe
 
 // ===== Data penjualan =====
 
+/** Satu sesi booking = satu baris item faktur. */
+const SESSION_SELECT = {
+  bookingDate: true,
+  startTime: true,
+  endTime: true,
+  subtotalPrice: true,
+  facilityUnit: { select: { name: true } }
+} satisfies Prisma.BookingSelect
+
 const SALE_SELECT = {
   id: true,
   receiptSequence: true,
@@ -112,12 +124,11 @@ const SALE_SELECT = {
   user: { select: { id: true, name: true, email: true, phoneNumber: true, customerSequence: true, accurateSequence: true } },
   booking: {
     select: {
+      ...SESSION_SELECT,
       customerName: true,
-      bookingDate: true,
-      startTime: true,
-      endTime: true,
-      bookingGroupId: true,
-      facility: { select: { name: true, accurateItemNo: true, accurateItemNoWarga: true } }
+      facility: { select: { name: true, accurateItemNo: true, accurateItemNoWarga: true } },
+      // Lead paket menyimpan id-nya sendiri di bookingGroupId, jadi ini = lead + semua anggota; kosong = booking tunggal.
+      groupMembers: { select: SESSION_SELECT, orderBy: { startsAt: 'asc' } }
     }
   },
   membership: {
@@ -212,27 +223,41 @@ function itemFor(sale: SaleRow, item: { accurateItemNo: string | null; accurateI
   return sale.priceCategory === 'warga_ub' ? item.accurateItemNoWarga : item.accurateItemNo
 }
 
-/** Baris utama faktur: fasilitas atau paket membership. null = nomor item Accurate belum diisi. */
-function mainItem(sale: SaleRow): { itemNo: string | null; name: string; label: string; notes: string } {
+/** Barang utama faktur: fasilitas atau paket membership. null = nomor item Accurate belum diisi. */
+function mainItem(sale: SaleRow): { itemNo: string | null; name: string; label: string } {
   const tariff = sale.priceCategory === 'warga_ub' ? ' (Warga UB)' : ' (umum)'
   if (sale.booking) {
-    const b = sale.booking
-    const when = `${slash(dateOnlyToString(b.bookingDate))} ${b.startTime}-${b.endTime}`
-    return {
-      itemNo: itemFor(sale, b.facility),
-      name: b.facility.name,
-      label: `Fasilitas ${b.facility.name}${tariff}`,
-      notes: b.bookingGroupId ? `Paket sesi, mulai ${when}` : when
-    }
+    const f = sale.booking.facility
+    return { itemNo: itemFor(sale, f), name: f.name, label: `Fasilitas ${f.name}${tariff}` }
   }
-  const m = sale.membership as NonNullable<SaleRow['membership']>
-  const plan = m.membershipPlan
+  const plan = (sale.membership as NonNullable<SaleRow['membership']>).membershipPlan
   return {
     itemNo: plan ? itemFor(sale, plan) : ACCURATE_ITEMS.membership,
     name: `Membership ${plan?.name ?? 'Gym (manual)'}`,
-    label: `Paket membership ${plan?.name ?? '(manual)'}${tariff}`,
-    notes: `${slash(dateOnlyToString(m.startDate))} - ${slash(dateOnlyToString(m.endDate))}${sale.user ? ` · ${customerNumber(sale.user.customerSequence)}` : ''}`
+    label: `Paket membership ${plan?.name ?? '(manual)'}${tariff}`
   }
+}
+
+/**
+ * Harga + catatan baris barang utama, berjumlah tepat sale.amount: satu baris per sesi booking (paket
+ * N sesi = N baris; SEMUA sesi grup apa pun statusnya sekarang — faktur = yang ditagih), membership satu baris.
+ */
+function saleLines(sale: SaleRow): Array<{ price: number; notes: string }> {
+  if (!sale.booking) {
+    const m = sale.membership as NonNullable<SaleRow['membership']>
+    const owner = sale.user ? ` · ${customerNumber(sale.user.customerSequence)}` : ''
+    return [{ price: sale.amount, notes: `${slash(dateOnlyToString(m.startDate))} - ${slash(dateOnlyToString(m.endDate))}${owner}` }]
+  }
+  const sessions = sale.booking.groupMembers.length > 0 ? sale.booking.groupMembers : [sale.booking]
+  // createBooking membagi harga paket ke subtotalPrice (sisa pembulatan di sesi pertama), jadi jumlahnya =
+  // amount. Data yang jumlahnya beda (mis. harga per sesi bawaan Laravel) dibagi rata ulang dari amount,
+  // sisa pembulatan di baris terakhir — total faktur tidak boleh bergeser dari yang ditransfer.
+  const stored = sessions.reduce((sum, s) => sum + s.subtotalPrice, 0) === sale.amount
+  const share = Math.floor(sale.amount / sessions.length)
+  return sessions.map((s, i) => ({
+    price: stored ? s.subtotalPrice : share + (i === sessions.length - 1 ? sale.amount - share * sessions.length : 0),
+    notes: `${slash(dateOnlyToString(s.bookingDate))} ${s.startTime}-${s.endTime}${s.facilityUnit ? ` · ${s.facilityUnit.name}` : ''}`
+  }))
 }
 
 // ===== 1. Pelanggan =====
@@ -277,26 +302,42 @@ export async function accurateInvoiceExport(query: unknown): Promise<{ filename:
     throw new ResponseError(422, message, 'VALIDATION_ERROR', { accurateItemNo: [message] })
   }
 
-  const rows = sales.map((sale) => {
+  // Baris kode unik butuh barang/jasa Accurate sendiri; tanpa nomornya impor menolak baris itu.
+  const codeItemNo = await accurateUniqueCodeItemNo()
+  if (!codeItemNo && sales.some((sale) => (sale.uniqueCode ?? 0) + sale.adminFee > 0)) {
+    const message = 'Nomor item Kode Unik Accurate belum diisi. Isi di menu Pembayaran > Pengaturan Pembayaran.'
+    throw new ResponseError(422, message, 'VALIDATION_ERROR', { accurateUniqueCodeItemNo: [message] })
+  }
+
+  const rows = sales.flatMap((sale) => {
     const item = mainItem(sale)
+    const lines = saleLines(sale).map((line) => ({ itemNo: item.itemNo, name: item.name, ...line }))
+    // ponytail: biaya admin lama (dihapus 2026-10-08) dilebur ke baris kode unik, bukan baris UBSC-ADMIN
+    // sendiri; pisahkan bila finance butuh akun pendapatan admin terpisah untuk faktur lama.
+    const extra = (sale.uniqueCode ?? 0) + sale.adminFee
+    if (extra > 0) {
+      const admin = sale.adminFee > 0 ? ` (termasuk biaya admin lama ${rupiahPlain(sale.adminFee)})` : ''
+      lines.push({ itemNo: codeItemNo, name: 'Kode Unik Transfer', price: extra, notes: `Kode unik transfer ${sale.invoiceNumber}${admin}` })
+    }
     const unpaid = sale.paymentStatus !== 'PAID'
-    // Rincian total tetap tercatat di catatan item supaya finance bisa menelusurinya. 'admin' hanya
-    // untuk transaksi lama yang masih membawa biaya admin (dihapus 2026-10-08).
-    const admin = sale.adminFee > 0 ? ` + admin ${rupiahPlain(sale.adminFee)}` : ''
-    const breakdown = `Harga ${rupiahPlain(sale.amount)}${admin} + kode unik ${rupiahPlain(sale.uniqueCode ?? 0)}`
-    return templateRow(INVOICE_HEADER, {
+    const head = {
       'CUSTOMER NO': customerIdOf(sale),
       NUMBER: sale.invoiceNumber,
       BRANCH: ACCURATE_BRANCH,
       DATE: { date: jakartaDate(sale.createdAt) },
-      DESCRIPTION: `${item.name} - ${customerNameOf(sale)}${unpaid ? ' (belum lunas)' : ''}`,
-      'ITEM:ITEM NO': item.itemNo,
-      'ITEM:QUANTITY': 1,
-      // Satu baris seharga total transfer — kode unik (dan biaya admin lama) tidak dipisah (keputusan client).
-      'ITEM:UNITPRICE': transferTotal(sale),
-      'ITEM:NAME': item.name,
-      'ITEM:ITEM NOTES': `${item.notes} · ${breakdown}`
-    })
+      DESCRIPTION: `${item.name} - ${customerNameOf(sale)}${unpaid ? ' (belum lunas)' : ''}`
+    }
+    // Baris pertama membawa kepala faktur; baris lanjutan hanya kolom ITEM:* (sel kosong = tidak ditulis).
+    return lines.map((line, i) =>
+      templateRow(INVOICE_HEADER, {
+        ...(i === 0 ? head : {}),
+        'ITEM:ITEM NO': line.itemNo,
+        'ITEM:QUANTITY': 1,
+        'ITEM:UNITPRICE': line.price,
+        'ITEM:NAME': line.name,
+        'ITEM:ITEM NOTES': line.notes
+      })
+    )
   })
 
   return { filename: `accurate-faktur-${suffix(from, to)}.xlsx`, buffer: buildXlsx('Template', INVOICE_HEADER, rows) }

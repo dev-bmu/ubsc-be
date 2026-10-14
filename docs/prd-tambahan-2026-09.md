@@ -892,6 +892,14 @@ semua kartu.
 - **Faktur satu baris.** Permintaan client: biaya admin dan kode unik tidak lagi jadi baris item terpisah. Satu
   faktur = satu baris item seharga total transfer; rinciannya dicatat di ITEM NOTES. Item `UBSC-ADMIN` dan
   `UBSC-KODEUNIK` tidak dipakai lagi. Panel Export Accurate pindah ke kepala card tabel ledger.
+- **Faktur per sesi + baris kode unik (catatan client 2026-10-14, membalik "Faktur satu baris").** Satu baris
+  item per sesi booking (paket kelas 5 sesi = 5 baris, harga = `subtotalPrice` sesi itu, catatan = tanggal/jam
+  dan unit), membership satu baris, lalu satu baris "Kode Unik Transfer" seharga kode unik dengan item dari
+  setting `accurate_unique_code_item_no` (Pembayaran → Pengaturan Pembayaran, "Nomor item Kode Unik
+  (Accurate)"; kosong + ada transaksi berkode unik = export faktur ditolak 422). Biaya admin transaksi lama
+  dilebur ke baris kode unik. Baris pertama membawa kolom kepala faktur, baris lanjutan hanya kolom
+  `ITEM:*`. Jumlah baris = total transfer = PAYMENT VALUE penerimaan; jumlah subtotal yang tidak sama
+  dengan `amount` (data lama) dibagi rata ulang, sisa pembulatan di baris terakhir.
 - **Export penerimaan penjualan (susulan 2026-10-07).** Template resmi dari finance ("Data Pelunasan
   Penjualan", sheet `Template`). Berkas ketiga, diimpor setelah pelanggan dan faktur:
   `GET /admin/finance/accurate/penerimaan?from=&to=` (izin `reports.read`).

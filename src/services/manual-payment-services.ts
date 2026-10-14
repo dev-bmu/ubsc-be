@@ -101,6 +101,11 @@ export async function accurateCashAccountNo(): Promise<string> {
   return (await setting('accurate_cash_account_no', '')).trim()
 }
 
+/** Nomor barang/jasa Accurate untuk baris kode unik di export Faktur Penjualan; '' = belum diisi. */
+export async function accurateUniqueCodeItemNo(): Promise<string> {
+  return (await setting('accurate_unique_code_item_no', '')).trim()
+}
+
 /** Checkout online hanya dibuka bila pelanggan punya cara membayar: QRIS atau rekening bank. */
 export async function isConfigured(): Promise<boolean> {
   const [account, qris] = await Promise.all([bankAccount(), qrisSetting()])

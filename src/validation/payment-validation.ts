@@ -81,7 +81,9 @@ export class PaymentValidation {
     ),
     uniqueCodeMax: requiredInt(CODE_MAX_REQUIRED, 600, 999, CODE_MAX_RANGE),
     /** Kolom EXPENSE ACCOUNT NO export Penerimaan Penjualan Accurate (template: maks 30). Boleh kosong. */
-    accurateCashAccountNo: optionalText(30, 'Kode akun Kas/Bank Accurate maksimal 30 karakter.')
+    accurateCashAccountNo: optionalText(30, 'Kode akun Kas/Bank Accurate maksimal 30 karakter.'),
+    /** Barang/jasa Accurate untuk baris kode unik export Faktur Penjualan (maks 30 seperti nomor item lain). Boleh kosong. */
+    accurateUniqueCodeItemNo: optionalText(30, 'Nomor item Kode Unik Accurate maksimal 30 karakter.')
   })
 }
 
