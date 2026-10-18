@@ -4,6 +4,7 @@ import { seedFacilities, seedFacilityCategories, seedFacilityPrices } from './se
 import { seedRbac } from './seeders/rbac'
 import { seedBookingSchedules, seedSystemSettings } from './seeders/settings'
 import { prisma, SEED_DEMO } from './seeders/shared'
+import { LANDING_TAGS, revalidateLanding } from '../src/middleware/revalidate-landing-middleware'
 import { seedStaffUsers } from './seeders/users'
 
 // ============================================================================
@@ -66,6 +67,14 @@ async function main() {
     console.log(`[${index + 1}/${steps.length}] ${step.label}`)
     await step.run()
   }
+
+  // Landing di-ISR: tanpa ini halaman publik masih menampilkan data sebelum reset sampai cache habis.
+  const refreshed = await revalidateLanding(LANDING_TAGS)
+  console.log(
+    refreshed
+      ? '\nCache landing diperbarui.'
+      : '\n! Cache landing tidak diperbarui (cek LANDING_REVALIDATE_URL/SECRET, landing harus jalan) — jalankan npm run landing:revalidate.'
+  )
 
   console.log('\nSeed selesai.')
 }

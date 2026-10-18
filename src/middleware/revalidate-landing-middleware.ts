@@ -8,12 +8,14 @@ import { logger } from '../utils/logger'
 // tulis (bukan GET) yang sukses meminta landing membuang tag cache terkait. Fire-and-forget — landing
 // yang mati tidak boleh menggagalkan tulis admin; halamannya tetap segar sendiri saat ISR habis.
 
-/** Tag fetch di ubsc-landing/src/services/server.ts. */
-export type LandingTag = 'home' | 'facilities' | 'booking-facilities' | 'membership-plans' | 'news' | 'booking-reviews' | 'seo'
+/** Tag fetch di ubsc-landing/src/services/server.ts (= ALLOWED_TAGS di landing src/app/revalidate/route.ts). */
+export const LANDING_TAGS = ['home', 'facilities', 'booking-facilities', 'membership-plans', 'news', 'booking-reviews', 'seo'] as const
+export type LandingTag = (typeof LANDING_TAGS)[number]
 
-export function revalidateLanding(tags: LandingTag[]): void {
-  if (!LANDING_REVALIDATE_URL || !LANDING_REVALIDATE_SECRET) return
-  void fetch(LANDING_REVALIDATE_URL, {
+/** Tidak pernah melempar; promise-nya boleh diabaikan (tulis admin) atau ditunggu (seed / skrip manual). */
+export function revalidateLanding(tags: readonly LandingTag[]): Promise<boolean> {
+  if (!LANDING_REVALIDATE_URL || !LANDING_REVALIDATE_SECRET) return Promise.resolve(false)
+  return fetch(LANDING_REVALIDATE_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-revalidate-secret': LANDING_REVALIDATE_SECRET },
     body: JSON.stringify({ tags }),
@@ -21,15 +23,19 @@ export function revalidateLanding(tags: LandingTag[]): void {
   })
     .then((res) => {
       if (!res.ok) logger.warn(`Revalidasi landing ditolak (HTTP ${res.status}) untuk ${tags.join(', ')}`)
+      return res.ok
     })
-    .catch((error: unknown) => logger.warn(`Revalidasi landing gagal: ${(error as Error).message}`))
+    .catch((error: unknown) => {
+      logger.warn(`Revalidasi landing gagal: ${(error as Error).message}`)
+      return false
+    })
 }
 
 export function revalidateLandingAfterWrite(tags: LandingTag[]): RequestHandler {
   return (req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.on('finish', () => {
-        if (res.statusCode < 400) revalidateLanding(tags)
+        if (res.statusCode < 400) void revalidateLanding(tags)
       })
     }
     next()

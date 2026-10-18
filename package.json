@@ -26,6 +26,7 @@
     "contract:hash": "tsx scripts/print-contract-hash.ts",
     "check:orphans": "tsx scripts/check-orphans.ts",
     "storage:migrate-r2": "tsx scripts/migrate-uploads-to-r2.ts",
+    "landing:revalidate": "tsx scripts/revalidate-landing.ts",
     "check:booking-instants": "tsx scripts/check-booking-instants.ts",
     "typecheck": "tsc --noEmit -p tsconfig.test.json"
   },
