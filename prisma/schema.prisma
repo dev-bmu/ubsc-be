@@ -871,6 +871,10 @@ model Transaction {
   // COUNT(*) untuk meta paginasinya juga cukup dari indeks — selama filternya hanya paymentStatus
   // (lihat queueQuery di payment-admin-services.ts).
   @@index([paymentStatus, paidAt, receiptSequence])
+  // Ledger keuangan basis 'created' tanpa filter status (jalur default): WHERE createdAt di rentang
+  // ORDER BY createdAt DESC, receiptSequence DESC LIMIT n — [paymentStatus, createdAt] tidak terpakai
+  // karena kolom depannya tidak difilter.
+  @@index([createdAt, receiptSequence])
   @@index([verifiedById])
   @@map("transactions")
 }

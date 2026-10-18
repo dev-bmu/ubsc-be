@@ -1,6 +1,6 @@
 import { RequestHandler, Response } from 'express'
 import { accurateCustomerExport, accurateInvoiceExport, accurateReceiptExport } from '../services/accurate-export-services'
-import { getFinanceReport } from '../services/finance-report-services'
+import { getFinanceReport, listFinanceLedger } from '../services/finance-report-services'
 import { ok } from '../utils/respond'
 
 // ===== Controller laporan keuangan (Fase 8D) =====
@@ -9,6 +9,15 @@ import { ok } from '../utils/respond'
 export const financeIndex: RequestHandler = async (req, res, next) => {
   try {
     ok(res, await getFinanceReport(req.query))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const financeLedger: RequestHandler = async (req, res, next) => {
+  try {
+    const { data, meta } = await listFinanceLedger(req.query)
+    ok(res, data, meta)
   } catch (error) {
     next(error)
   }

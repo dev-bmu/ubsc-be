@@ -1,8 +1,20 @@
 import { PaymentStatus, Prisma } from '@prisma/client'
-import type { AdminFinanceDto, FinanceBreakdownRowDto, FinanceLedgerRowDto, FinanceStatsDto, FinanceTypeBreakdownDto } from '../../shared/contracts'
+import type {
+  AdminFinanceDto,
+  ApiMeta,
+  FinanceBreakdownRowDto,
+  FinanceLedgerDto,
+  FinanceLedgerRowDto,
+  FinanceStatsDto,
+  FinanceTypeBreakdownDto
+} from '../../shared/contracts'
 import { prismaClient } from '../application/database'
-import { dateOnly, daysInMonth, formatInstant, jakartaDate, jakartaWallTimeToUtc, now } from '../utils/clock'
+import { addDays, dateOnly, daysInMonth, formatInstant, jakartaDate, jakartaWallTimeToUtc, now } from '../utils/clock'
 import { transferTotal } from '../utils/money'
+import { paginationMeta } from '../utils/respond'
+import { AccurateExportValidation } from '../validation/accurate-export-validation'
+import { Validation } from '../validation/Validation'
+import { transactionSearchWhere } from './payment-admin-services'
 
 // ============================================================================
 // === Laporan keuangan — port Admin\FinanceReportController ===
@@ -16,8 +28,9 @@ import { transferTotal } from '../utils/money'
 //   - bookingDate kolom @db.Date (tanggal kalender, tengah malam UTC) -> rentang dateOnly().
 //
 // SATU query utama (transactionsForPeriod + relasi) menjadi sumber stats, dailyRevenue, facilityRevenue,
-// membershipPlanRevenue, dan ledger — himpunan yang Laravel ambil lewat query terpisah semuanya adalah
-// irisan dari himpunan itu (lihat komentar per bagian).
+// dan membershipPlanRevenue — himpunan yang Laravel ambil lewat query terpisah semuanya adalah irisan dari
+// himpunan itu (lihat komentar per bagian). Ledger punya endpoint sendiri (listFinanceLedger, paling
+// bawah): rentang tanggal bebas, dipaginasi, ringkasannya dari agregat SQL.
 //
 // UANG. Laravel menjumlahkan `amount` saja. Sejak biaya admin (2026-09) total pendapatan, tren, grafik,
 // dan ledger memakai transferTotal() = harga + biaya admin + kode unik — uang yang benar-benar masuk
@@ -201,8 +214,9 @@ export async function getFinanceReport(query: unknown): Promise<AdminFinanceDto>
   const prevYear = month === 1 ? year - 1 : year
 
   const [periodRows, lastMonthAgg, yearPaid, totalBookings, activeMemberships] = await Promise.all([
-    // $allPeriodTransactions — urutan COALESCE(paid_at, created_at) DESC dikerjakan di bawah (Prisma
-    // tidak bisa ORDER BY ekspresi).
+    // $allPeriodTransactions (urutan tidak dipakai lagi sejak ledger pindah ke listFinanceLedger).
+    // ponytail: stats bulanan masih memuat SEMUA baris bulan itu ke JS — ringan untuk ribuan transaksi per
+    // bulan; bila sebulan mencapai puluhan ribu, ganti dengan aggregate/groupBy + GROUP BY tanggal WIB (raw).
     prismaClient.transaction.findMany({ where: periodWhere(year, month), include: LEDGER_INCLUDE }),
     prismaClient.transaction.aggregate({
       _sum: { amount: true, adminFee: true, uniqueCode: true },
@@ -225,19 +239,14 @@ export async function getFinanceReport(query: unknown): Promise<AdminFinanceDto>
     prismaClient.membership.count({ where: { status: 'active' } })
   ])
 
-  // Seri COALESCE tidak berurutan pasti di MySQL; dipecah receiptSequence DESC (padanan PK Laravel).
-  const allPeriod = [...periodRows].sort(
-    (a, b) => (b.paidAt ?? b.createdAt).getTime() - (a.paidAt ?? a.createdAt).getTime() || b.receiptSequence - a.receiptSequence
-  )
-
   // $paidTransactions = transactionsForPeriod + PAID — irisan persis dari $allPeriodTransactions.
-  const paid = allPeriod.filter((t) => t.paymentStatus === 'PAID')
+  const paid = periodRows.filter((t) => t.paymentStatus === 'PAID')
   const totalRevenue = sumTransferred(paid)
   const bookingRevenue = sumAmount(paid.filter((t) => t.bookingId))
   const membershipRevenue = sumAmount(paid.filter((t) => t.membershipId))
   const adminFeeRevenue = paid.reduce((total, t) => total + t.adminFee, 0)
   const uniqueCodeRevenue = paid.reduce((total, t) => total + (t.uniqueCode ?? 0), 0)
-  const pendingFailedAmount = sumTransferred(allPeriod.filter((t) => PENDING_FAILED.includes(t.paymentStatus)))
+  const pendingFailedAmount = sumTransferred(periodRows.filter((t) => PENDING_FAILED.includes(t.paymentStatus)))
   const lastSum = lastMonthAgg._sum
   const lastMonthRevenue = transferTotal({ amount: lastSum.amount ?? 0, adminFee: lastSum.adminFee ?? 0, uniqueCode: lastSum.uniqueCode })
 
@@ -298,7 +307,87 @@ export async function getFinanceReport(query: unknown): Promise<AdminFinanceDto>
     facilityRevenue,
     membershipPlanRevenue,
     typeBreakdown: typeBreakdown(stats),
-    ledger: allPeriod.map(ledgerRow),
     period: { month, year }
+  }
+}
+
+// ===== Ledger (rentang tanggal + paginasi) =====
+
+/** Sama dengan transactionType(): kolom bookingId menang bila (secara teori) dua-duanya terisi. */
+const LEDGER_TYPE_WHERE = {
+  all: {},
+  booking: { bookingId: { not: null } },
+  membership: { bookingId: null, membershipId: { not: null } },
+  other: { bookingId: null, membershipId: null }
+} satisfies Record<string, Prisma.TransactionWhereInput>
+
+/**
+ * Ledger transaksi rentang WIB [from, to], dengan dasar TANGGAL yang sama dengan export Accurate, tetapi
+ * himpunan yang lebih luas (sengaja: FAILED/EXPIRED mengisi 'Perhatian', ledger bulanan lama juga begitu):
+ *   basis 'created' = transaksi DIBUAT di rentang itu, semua status/nominal (Faktur hanya PAID/UNPAID, nominal > 0,
+ *                     booking/membership);
+ *   basis 'paid'    = transaksi LUNAS di rentang itu (Penerimaan tanpa nominal 0 dan tanpa transaksi 'other').
+ * ponytail: perlu angka persis sama dengan file export? Tambah filter opt-in "hanya yang diekspor" memakai where salesIn.
+ * Urutan: dulu COALESCE(paidAt, createdAt) DESC di JS atas semua baris bulan itu. Prisma tidak bisa
+ * ORDER BY ekspresi, jadi sekarang kolom basisnya sendiri (createdAt / paidAt) DESC, seri receiptSequence
+ * DESC — keduanya terbaca dari indeks ([createdAt, receiptSequence] / [paymentStatus, paidAt, receiptSequence]).
+ * Ringkasan dihitung groupBy/count atas seluruh filter, bukan dengan memuat semua baris.
+ */
+export async function listFinanceLedger(query: unknown): Promise<{ data: FinanceLedgerDto; meta: ApiMeta }> {
+  const v = Validation.validate(AccurateExportValidation.LEDGER, query)
+  const from = v.from ?? jakartaDate()
+  const to = v.to ?? from
+  const window = { gte: jakartaWallTimeToUtc(from, '00:00'), lt: jakartaWallTimeToUtc(addDays(to, 1), '00:00') }
+  const search = await transactionSearchWhere(v.q)
+  const where: Prisma.TransactionWhereInput = {
+    AND: [
+      v.basis === 'paid' ? { paidAt: window, paymentStatus: 'PAID' } : { createdAt: window },
+      LEDGER_TYPE_WHERE[v.type],
+      v.status === 'all' ? {} : { paymentStatus: v.status },
+      search ?? {}
+    ]
+  }
+
+  const [rows, byStatus, bookingCount, membershipCount] = await Promise.all([
+    prismaClient.transaction.findMany({
+      where,
+      orderBy: [v.basis === 'paid' ? { paidAt: 'desc' } : { createdAt: 'desc' }, { receiptSequence: 'desc' }],
+      skip: (v.page - 1) * v.perPage,
+      take: v.perPage,
+      include: LEDGER_INCLUDE
+    }),
+    prismaClient.transaction.groupBy({
+      by: ['paymentStatus'],
+      where,
+      _sum: { amount: true, adminFee: true, uniqueCode: true },
+      _count: { _all: true }
+    }),
+    prismaClient.transaction.count({ where: { AND: [where, LEDGER_TYPE_WHERE.booking] } }),
+    prismaClient.transaction.count({ where: { AND: [where, LEDGER_TYPE_WHERE.membership] } })
+  ])
+
+  const tally = (groups: typeof byStatus) => ({
+    amount: groups.reduce(
+      (sum, g) => sum + transferTotal({ amount: g._sum.amount ?? 0, adminFee: g._sum.adminFee ?? 0, uniqueCode: g._sum.uniqueCode }),
+      0
+    ),
+    count: groups.reduce((sum, g) => sum + g._count._all, 0)
+  })
+  const paid = tally(byStatus.filter((g) => g.paymentStatus === 'PAID'))
+  const attention = tally(byStatus.filter((g) => g.paymentStatus !== 'PAID'))
+
+  return {
+    data: {
+      rows: rows.map(ledgerRow),
+      summary: {
+        paidAmount: paid.amount,
+        paidCount: paid.count,
+        attentionAmount: attention.amount,
+        attentionCount: attention.count,
+        bookingCount,
+        membershipCount
+      }
+    },
+    meta: paginationMeta(v.page, v.perPage, paid.count + attention.count)
   }
 }

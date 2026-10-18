@@ -1456,7 +1456,10 @@ export interface FinanceLedgerRowDto {
   createdAt: string | null
 }
 
-/** GET /api/admin/finance?month=&year= — month di-clamp 1..12, year 2020..2100 (default bulan berjalan WIB). */
+/**
+ * GET /api/admin/finance?month=&year= — month di-clamp 1..12, year 2020..2100 (default bulan berjalan WIB).
+ * Ledger tidak lagi ikut di sini: GET /api/admin/finance/ledger (rentang tanggal + paginasi).
+ */
 export interface AdminFinanceDto {
   stats: FinanceStatsDto
   revenueTrend: number
@@ -1467,8 +1470,36 @@ export interface AdminFinanceDto {
   facilityRevenue: FinanceBreakdownRowDto[]
   membershipPlanRevenue: FinanceBreakdownRowDto[]
   typeBreakdown: FinanceTypeBreakdownDto[]
-  ledger: FinanceLedgerRowDto[]
   period: { month: number; year: number }
+}
+
+/**
+ * Dasar tanggal ledger = dasar tanggal export, BUKAN himpunan yang sama: 'created' = tanggal transaksi dibuat,
+ * semua status/nominal (Faktur hanya PAID/UNPAID bernominal > 0 dengan booking/membership); 'paid' = tanggal
+ * lunas, hanya PAID (Penerimaan tanpa transaksi gratis bernominal 0 dan tanpa transaksi 'other').
+ */
+export type FinanceLedgerBasis = 'created' | 'paid'
+export type FinanceLedgerType = 'all' | FinanceLedgerRowDto['type']
+export type FinanceLedgerStatus = 'all' | PaymentStatus
+
+/** Ringkasan SELURUH hasil filter (bukan hanya halaman ini). Nominal = total transfer. attention = selain PAID. */
+export interface FinanceLedgerSummaryDto {
+  paidAmount: number
+  paidCount: number
+  attentionAmount: number
+  attentionCount: number
+  bookingCount: number
+  membershipCount: number
+}
+
+/**
+ * GET /api/admin/finance/ledger?from=&to=&basis=&type=&status=&q=&page=&perPage= — from/to 'YYYY-MM-DD' WIB
+ * (default hari ini, maks 366 hari), meta paginasi di envelope. Urutan: basis created -> createdAt DESC,
+ * paid -> paidAt DESC (seri: receiptSequence DESC).
+ */
+export interface FinanceLedgerDto {
+  rows: FinanceLedgerRowDto[]
+  summary: FinanceLedgerSummaryDto
 }
 
 // ============================================================================

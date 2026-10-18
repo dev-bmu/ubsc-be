@@ -6,7 +6,7 @@ import { releaseExpiredPayments } from '../src/jobs/release-expired-payments'
 import { ResponseError } from '../src/error/response-error'
 import { createAdminBooking, destroyBooking } from '../src/services/booking-admin-services'
 import { createBooking } from '../src/services/booking-services'
-import { getFinanceReport } from '../src/services/finance-report-services'
+import { getFinanceReport, listFinanceLedger } from '../src/services/finance-report-services'
 import { staffInvoice } from '../src/services/invoice-services'
 import { approve, attachProof, DEFAULT_UNIQUE_CODE_MAX, expire, reject, uniqueCodeMax } from '../src/services/manual-payment-services'
 import { createMembership } from '../src/services/membership-services'
@@ -483,7 +483,9 @@ describe('kode unik 501..999 tanpa biaya admin (revisi client 2026-10-08)', () =
     const report = await getFinanceReport({ month: '3', year: '2027' })
     expect(report.stats).toMatchObject({ totalRevenue: expected, bookingRevenue: 100_000, membershipRevenue: 300_000, adminFeeRevenue: 500 })
     expect(report.typeBreakdown.reduce((sum, row) => sum + row.revenue, 0)).toBe(expected)
-    expect(report.ledger.reduce((sum, row) => sum + row.total, 0)).toBe(expected)
+    const ledger = await listFinanceLedger({ from: '2027-03-01', to: '2027-03-31', basis: 'paid' })
+    expect(ledger.data.rows.reduce((sum, row) => sum + row.total, 0)).toBe(expected)
+    expect(ledger.data.summary).toMatchObject({ paidAmount: expected, paidCount: 2, attentionCount: 0 })
     expect(report.dailyRevenue[9]).toBe(expected)
   })
 })

@@ -140,10 +140,12 @@ const INT_MAX = 2_147_483_647
  * SQL karena Prisma tidak bisa menjumlah kolom di where; pendingTotal tidak dipakai karena dikosongkan
  * saat disetujui/ditolak, padahal staff juga mencocokkan mutasi dengan transaksi yang sudah lunas.
  *
+ * Dipakai juga ledger keuangan (finance-report-services) — satu definisi "cari transaksi" untuk panel.
+ *
  * ponytail: LIKE '%q%' + jumlah kolom = full scan transactions. Cukup untuk puluhan ribu baris; bila
  * terasa lambat, tambah FULLTEXT / kolom total ber-indeks.
  */
-async function searchWhere(q: string): Promise<Prisma.TransactionWhereInput | null> {
+export async function transactionSearchWhere(q: string): Promise<Prisma.TransactionWhereInput | null> {
   if (!q) return null
   // Prisma tidak meng-escape wildcard LIKE: '%' / '_' akan mencocokkan semua baris. '\' = escape bawaan MySQL.
   const contains = { contains: q.replace(/[\\%_]/g, (c) => '\\' + c) }
@@ -168,7 +170,7 @@ async function searchWhere(q: string): Promise<Prisma.TransactionWhereInput | nu
 export async function listPaymentQueue(query: unknown): Promise<{ data: AdminPaymentIndexDto; meta: ApiMeta }> {
   const { tab, q, page, perPage } = Validation.validate(PaymentValidation.QUEUE, query)
   const queue = queueQuery(tab)
-  const search = await searchWhere(q)
+  const search = await transactionSearchWhere(q)
   const where = search ? { AND: [queue.where, search] } : queue.where
 
   const [rows, total, awaiting, rejected, settings] = await Promise.all([

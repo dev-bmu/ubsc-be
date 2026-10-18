@@ -35,7 +35,9 @@ const ARENAS: FacilitySeed[] = [
   ...item,
   venueType: 'Indoor Facility',
   location: 'Veteran',
-  isActive: true,
+  // Keputusan client 2026-10-18: yang dibuka hanya kelas Yoga, Zumba, Aerobik. Lapangan tetap di-seed
+  // (harga, gambar, slug) supaya tinggal diaktifkan dari panel admin saat dibuka.
+  isActive: false,
   bookingMode: 'court' as const,
   categorySlug: 'lapangan-arena',
   descriptionPrefix: 'Fasilitas'
@@ -45,7 +47,7 @@ const CLASSES: FacilitySeed[] = [
   { name: 'Yoga', classCode: 'Class 001', image: 'fasilitas-yoga-ub-sport-center.avif', sortOrder: 6, isActive: true },
   { name: 'Zumba', classCode: 'Class 002', image: 'fasilitas-zumba-ub-sport-center.avif', sortOrder: 7, isActive: true },
   { name: 'Aerobik', classCode: 'Class 003', image: 'fasilitas-aerobik-ub-sport-center.avif', sortOrder: 8, isActive: true },
-  { name: 'BMU Karate', classCode: 'Class 004', image: 'fasilitas-beladiri-ub-sport-center.avif', sortOrder: 9, isActive: true },
+  { name: 'BMU Karate', classCode: 'Class 004', image: 'fasilitas-beladiri-ub-sport-center.avif', sortOrder: 9, isActive: false },
   // isActive FALSE, mengikuti database Laravel (`ubsc`.facilities: is_active=0), bukan menebak dari
   // adanya berkas gambar. Zona Akurasi yang aktif memunculkan satu kartu fasilitas ekstra di SectionFour
   // dan SectionSix yang tidak pernah dirender Laravel — sama kelasnya dengan Pilates di baris berikutnya.

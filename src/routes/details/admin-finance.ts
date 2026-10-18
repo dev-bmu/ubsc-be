@@ -7,6 +7,8 @@ import { requirePermission } from '../../middleware/permission-middleware'
 // Prefix penuh (/api/admin/finance) dideklarasikan di private-api.ts.
 //
 //   GET /api/admin/finance?month=&year=   laporan satu bulan (month 1..12, year 2020..2100; default bulan berjalan WIB)
+//   GET /api/admin/finance/ledger?from=&to=&basis=created|paid&type=&status=&q=&page=&perPage=
+//                                         ledger ter-paginasi + ringkasan seluruh filter (rentang maks 366 hari)
 //   GET /api/admin/finance/accurate/pelanggan?from=&to=   .xlsx impor pelanggan Accurate (pelanggan di faktur rentang itu)
 //   GET /api/admin/finance/accurate/faktur?from=&to=      .xlsx impor faktur penjualan Accurate (transaksi dibuat di rentang itu)
 //   GET /api/admin/finance/accurate/penerimaan?from=&to=  .xlsx impor penerimaan penjualan Accurate (transaksi lunas di rentang itu)
@@ -16,6 +18,7 @@ import { requirePermission } from '../../middleware/permission-middleware'
 const adminFinanceRoutes = express.Router()
 
 adminFinanceRoutes.get('/', requirePermission(PERMISSIONS.REPORTS_READ), ctrl.financeIndex)
+adminFinanceRoutes.get('/ledger', requirePermission(PERMISSIONS.REPORTS_READ), ctrl.financeLedger)
 adminFinanceRoutes.get('/accurate/pelanggan', requirePermission(PERMISSIONS.REPORTS_READ), ctrl.accurateCustomers)
 adminFinanceRoutes.get('/accurate/faktur', requirePermission(PERMISSIONS.REPORTS_READ), ctrl.accurateInvoices)
 adminFinanceRoutes.get('/accurate/penerimaan', requirePermission(PERMISSIONS.REPORTS_READ), ctrl.accurateReceipts)
