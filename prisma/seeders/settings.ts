@@ -19,7 +19,7 @@ const SETTINGS: { key: string; value: string }[] = [
   { key: 'payment_bank_account_number', value: '1234567890' },
   { key: 'payment_bank_account_holder', value: 'UB Sport Center (DUMMY)' },
   // Lama hold booking sebelum dilepas cron payments:release-expired.
-  { key: 'payment_hold_minutes', value: '120' }
+  { key: 'payment_hold_minutes', value: '15' }
 ]
 
 export async function seedSystemSettings() {

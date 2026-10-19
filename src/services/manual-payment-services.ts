@@ -50,7 +50,7 @@ export const CODE_MAX_FLOOR = 600
 /** Batas percobaan alokasi kode (R11) — setelah itu gagal bersih, tidak berputar. */
 const CODE_ATTEMPTS = 25
 
-export const DEFAULT_HOLD_MINUTES = 120
+export const DEFAULT_HOLD_MINUTES = 15
 /**
  * Revisi client 2026-10-08: biaya admin DIHAPUS (transaksi baru selalu adminFee 0; kolomnya tetap untuk
  * transaksi lama) dan kode unik 501..999.
