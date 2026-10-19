@@ -2,7 +2,7 @@ import { createHash } from 'crypto'
 import type { Request } from 'express'
 import type { AdminNotificationItemDto, AdminNotificationTone, AdminNotificationsDto } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
-import { PERMISSIONS, STAFF_ROLES } from '../config/permissions'
+import { PERMISSIONS } from '../config/permissions'
 import { isBypassed } from '../middleware/permission-middleware'
 import type { UserRequest } from '../type/user-request'
 import { addDays, dateOnly, dateOnlyToString, formatInstant, jakartaDate, now } from '../utils/clock'
@@ -160,9 +160,12 @@ function canSee(req: Request, codes: string[]): boolean {
   return codes.some((code) => permissions.includes(code))
 }
 
-/** `$user->hasAnyRole(self::STAFF_ROLES)` — daftar rolenya identik dengan STAFF_ROLES shared. */
+/**
+ * `$user->hasAnyRole(self::STAFF_ROLES)` Laravel. Sejak role bisa ditambah dari panel (2026-10-20), staf =
+ * akun yang PUNYA role apa pun — pelanggan tidak pernah punya role (sama dengan denyStaffAccounts).
+ */
 function isStaffRole(roleName: string | null | undefined): boolean {
-  return !!roleName && (STAFF_ROLES as readonly string[]).includes(roleName)
+  return !!roleName
 }
 
 /**

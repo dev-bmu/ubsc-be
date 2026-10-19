@@ -36,6 +36,8 @@ export const PERMISSIONS = {
   MEMBERS_READ: 'members.read',
   MEMBERS_MANAGE: 'members.manage',
   PAYMENTS_MANAGE: 'payments.manage',
+  // BARU (2026-10-20): Pengaturan Pembayaran dipisah dari verifikasi supaya bisa dibatasi ke Administrator.
+  PAYMENTS_SETTINGS_MANAGE: 'payments.settings.manage',
 
   // Verifikasi
   IDENTITY_VERIFY: 'identity.verify',
@@ -109,6 +111,11 @@ export const ALL_PERMISSIONS: PermissionDefinition[] = [
   { code: PERMISSIONS.MEMBERS_READ, name: 'Lihat Member', description: 'Melihat daftar member dan pelanggan, tanpa mengubah' },
   { code: PERMISSIONS.MEMBERS_MANAGE, name: 'Kelola Member', description: 'Membuat dan mengubah data member serta masa berlaku membership' },
   { code: PERMISSIONS.PAYMENTS_MANAGE, name: 'Kelola Pembayaran', description: 'Menyetujui, menolak, dan mengelola tautan pembayaran' },
+  {
+    code: PERMISSIONS.PAYMENTS_SETTINGS_MANAGE,
+    name: 'Kelola Pengaturan Pembayaran',
+    description: 'Mengubah durasi hold, kode unik, QRIS, rekening, dan kode Accurate di Pengaturan Pembayaran'
+  },
 
   // ===== Verifikasi =====
   { code: PERMISSIONS.IDENTITY_VERIFY, name: 'Verifikasi Identitas', description: 'Memproses antrean verifikasi identitas warga kampus' },
@@ -154,7 +161,9 @@ export const ROLE_PERMISSIONS: Record<StaffRoleName, PermissionCode[]> = {
   // mem-push array ini tidak boleh ikut merusak katalog permission.
   Administrator: [...PERMISSION_CODES],
 
-  Manager: [...PERMISSION_CODES],
+  // Semua KECUALI pengaturan pembayaran: keputusan client 2026-10-20, default-nya hanya Administrator
+  // (yang mem-bypass). Bisa diberikan ke role lain dari layar Role & Access.
+  Manager: PERMISSION_CODES.filter((code) => code !== PERMISSIONS.PAYMENTS_SETTINGS_MANAGE),
 
   Finance: [PERMISSIONS.STATS_READ, PERMISSIONS.REPORTS_READ, PERMISSIONS.BOOKINGS_READ, PERMISSIONS.MEMBERS_READ, PERMISSIONS.PAYMENTS_MANAGE],
 

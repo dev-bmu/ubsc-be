@@ -40,6 +40,30 @@ export const rolesUpdate: RequestHandler = async (req, res, next) => {
   }
 }
 
+export const rolesStore: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await service.createRole(actorOf(req), req.body), undefined, 201)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const rolesRename: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await service.renameRole(actorOf(req), String(req.params.name), req.body))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const rolesDestroy: RequestHandler = async (req, res, next) => {
+  try {
+    ok(res, await service.deleteRole(actorOf(req), String(req.params.name)))
+  } catch (error) {
+    next(error)
+  }
+}
+
 // ===== Pengguna internal =====
 
 export const usersIndex: RequestHandler = async (req, res, next) => {

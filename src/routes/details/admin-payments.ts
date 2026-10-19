@@ -18,7 +18,8 @@ import { QRIS_TOO_LARGE_MESSAGE } from '../../services/payment-admin-services'
 //   GET  /api/admin/payments/:transactionId/invoice      invoice/kuitansi siap cetak (InvoiceDto) — meja depan
 //
 // `manage-bookings` ATAU `manage-payment-links` Laravel = bookings.manage | payments.manage.
-// Pengaturan HANYA `manage-payment-links` (authorizeAny(['manage-payment-links'])) = payments.manage.
+// Pengaturan (rekening, hold, kode unik, QRIS, kode Accurate) memakai permission sendiri sejak 2026-10-20:
+// payments.settings.manage, default hanya Administrator. Verifikasi bukti transfer tetap payments.manage.
 // POST /settings tidak bentrok dengan /:transactionId/* karena kedalaman path-nya berbeda; tetap
 // didaftarkan di atas route ber-parameter supaya urutannya literal-sebelum-:param.
 
@@ -27,10 +28,10 @@ const PAYMENT_VERIFIERS = [PERMISSIONS.BOOKINGS_MANAGE, PERMISSIONS.PAYMENTS_MAN
 const adminPaymentRoutes = express.Router()
 
 adminPaymentRoutes.get('/', requireAnyPermission(PAYMENT_VERIFIERS), ctrl.index)
-adminPaymentRoutes.post('/settings', requirePermission(PERMISSIONS.PAYMENTS_MANAGE), ctrl.updateSettings)
+adminPaymentRoutes.post('/settings', requirePermission(PERMISSIONS.PAYMENTS_SETTINGS_MANAGE), ctrl.updateSettings)
 const qrisUpload = singleFileUpload('image', 'CMS_IMAGE', { tooLargeMessage: QRIS_TOO_LARGE_MESSAGE })
-adminPaymentRoutes.post('/settings/qris', requirePermission(PERMISSIONS.PAYMENTS_MANAGE), qrisUpload, ctrl.uploadQris)
-adminPaymentRoutes.delete('/settings/qris', requirePermission(PERMISSIONS.PAYMENTS_MANAGE), ctrl.removeQris)
+adminPaymentRoutes.post('/settings/qris', requirePermission(PERMISSIONS.PAYMENTS_SETTINGS_MANAGE), qrisUpload, ctrl.uploadQris)
+adminPaymentRoutes.delete('/settings/qris', requirePermission(PERMISSIONS.PAYMENTS_SETTINGS_MANAGE), ctrl.removeQris)
 adminPaymentRoutes.post('/:transactionId/approve', requireAnyPermission(PAYMENT_VERIFIERS), ctrl.approve)
 adminPaymentRoutes.post('/:transactionId/reject', requireAnyPermission(PAYMENT_VERIFIERS), ctrl.reject)
 adminPaymentRoutes.get('/:transactionId/bukti', requireAnyPermission(PAYMENT_VERIFIERS), ctrl.proofFile)

@@ -2,13 +2,13 @@ import { Prisma } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import type { AdminRoleDto, AdminRoleIndexDto, AdminStaffUserDto, AdminStaffUserIndexDto } from '../../shared/contracts'
 import { prismaClient } from '../application/database'
-import { ADMINISTRATOR_ROLE, isAdministrator, STAFF_ROLES } from '../config/permissions'
+import { ADMINISTRATOR_ROLE, isAdministrator } from '../config/permissions'
 import { ResponseError } from '../error/response-error'
 import { FORBIDDEN_MESSAGE } from '../middleware/permission-middleware'
 import { addMinutes, now } from '../utils/clock'
 import { isUniqueViolation } from '../utils/prisma-errors'
 import { ApiFieldErrors } from '../utils/respond'
-import { INTERNAL_ROLES, SettingsAdminValidation } from '../validation/settings-admin-validation'
+import { SettingsAdminValidation } from '../validation/settings-admin-validation'
 import { Validation } from '../validation/Validation'
 import { getPermissionsByRole } from './permission-services'
 
@@ -59,18 +59,13 @@ const ROLE_ORDER: readonly string[] = ['Manager', 'Finance', 'Staff Central', 'S
 const ONLINE_WINDOW_MINUTES = 15
 
 /**
- * `array_search($r->name, $order)` sebagai kunci sortBy Laravel.
- *
- * array_search mengembalikan FALSE untuk nama di luar daftar. Collection::sortBy membandingkan kunci
- * dengan `<=>`, dan PHP membandingkan bool vs int dengan mengonversi keduanya ke bool: false <=> 0
- * menghasilkan 0 (SAMA dengan 'Manager'), sedangkan false <=> 1|2|3 menghasilkan -1 (lebih kecil).
- * Artinya role tak dikenal berperilaku persis seperti rank 0 — itulah yang ditiru di sini.
- *
- * Kasusnya hanya tercapai bila tabel roles memuat nama di luar lima role staff; tidak ada di seeder.
+ * Urutan tampil: role bawaan sesuai ROLE_ORDER, lalu role buatan panel (sejak 2026-10-20) di belakangnya
+ * menurut nama (query sudah orderBy name, dan sort stabil). Laravel memberi role tak dikenal rank 0 —
+ * kebetulan yang tak lagi masuk akal begitu role bisa ditambah dari panel.
  */
 function roleOrderRank(name: string): number {
   const index = ROLE_ORDER.indexOf(name)
-  return index === -1 ? 0 : index
+  return index === -1 ? ROLE_ORDER.length : index
 }
 
 /**
@@ -214,24 +209,8 @@ export async function updateRolePermissions(actor: SettingsActor, roleName: stri
   if (isAdministrator(role.name)) throw new ResponseError(403, 'Hak akses Administrator tidak dapat diubah.', 'FORBIDDEN')
 
   const v = Validation.validate(SettingsAdminValidation.ROLE_PERMISSIONS, request)
-
-  // `exists:permissions,name` -> di sini dicocokkan ke Permission.code (lihat permissionCodesFor).
-  const known = await prismaClient.permission.findMany({ where: { code: { in: v.permissions } }, select: { id: true, code: true } })
-  const idByCode = new Map(known.map((permission) => [permission.code, permission.id]))
-
-  // Kunci field ditulis per-index ('permissions.0') supaya bentuknya identik dengan pesan
-  // `permissions.*` Laravel dan applyApiErrors() menempel ke baris yang tepat.
-  const fields: ApiFieldErrors = {}
-  v.permissions.forEach((code, index) => {
-    if (!idByCode.has(code)) fields[`permissions.${index}`] = ['Hak akses yang dipilih tidak dikenal.']
-  })
-  if (Object.keys(fields).length > 0) {
-    throw new ResponseError(422, 'Hak akses yang dipilih tidak dikenal.', 'VALIDATION_ERROR', fields)
-  }
-
-  // syncPermissions(): himpunan akhir PERSIS sama dengan yang dikirim. Duplikat di payload dibuang —
-  // @@unique([roleName, permissionId]) akan menolaknya, dan Laravel pun menganggapnya satu.
-  const permissionIds = Array.from(new Set(v.permissions.map((code) => idByCode.get(code) as string)))
+  // syncPermissions(): himpunan akhir PERSIS sama dengan yang dikirim.
+  const permissionIds = await resolvePermissionIds(v.permissions)
 
   // Hapus-lalu-tulis dalam satu transaksi: kalau createMany gagal di tengah, role tidak boleh
   // tertinggal tanpa satu pun permission.
@@ -241,6 +220,135 @@ export async function updateRolePermissions(actor: SettingsActor, roleName: stri
   })
 
   return loadRoleDto(role.name)
+}
+
+/**
+ * `exists:permissions,name` -> dicocokkan ke Permission.code (lihat permissionCodesFor). Kunci field ditulis
+ * per-index ('permissions.0') supaya applyApiErrors() menempel ke baris yang tepat. Duplikat dibuang —
+ * @@unique([roleName, permissionId]) akan menolaknya.
+ */
+async function resolvePermissionIds(codes: string[]): Promise<string[]> {
+  const known = await prismaClient.permission.findMany({ where: { code: { in: codes } }, select: { id: true, code: true } })
+  const idByCode = new Map(known.map((permission) => [permission.code, permission.id]))
+
+  const fields: ApiFieldErrors = {}
+  codes.forEach((code, index) => {
+    if (!idByCode.has(code)) fields[`permissions.${index}`] = ['Hak akses yang dipilih tidak dikenal.']
+  })
+  if (Object.keys(fields).length > 0) {
+    throw new ResponseError(422, 'Hak akses yang dipilih tidak dikenal.', 'VALIDATION_ERROR', fields)
+  }
+
+  return Array.from(new Set(codes.map((code) => idByCode.get(code) as string)))
+}
+
+const ROLE_NAME_TAKEN = 'Nama role sudah dipakai.'
+
+function roleNameTaken(): ResponseError {
+  return new ResponseError(422, ROLE_NAME_TAKEN, 'VALIDATION_ERROR', { name: [ROLE_NAME_TAKEN] })
+}
+
+/**
+ * POST /api/admin/settings/roles — role baru (BARU 2026-10-20; Laravel hanya punya lima role tetap).
+ *
+ * Gate sama dengan update: rbac.manage di baris route + Administrator saja di sini. Nama dibandingkan lewat
+ * indeks unik roles.name; kolasi MySQL tidak membedakan huruf besar-kecil, jadi 'finance' bentrok dengan
+ * 'Finance' dan dibalas 422 yang sama (pemeriksaan awal + tangkapan P2002 untuk balapan).
+ */
+export async function createRole(actor: SettingsActor, request: unknown): Promise<AdminRoleDto> {
+  assertAdministrator(actor, 'Hanya Administrator yang dapat menambah role.')
+
+  const v = Validation.validate(SettingsAdminValidation.ROLE_CREATE, request)
+  if (await prismaClient.role.findUnique({ where: { name: v.name }, select: { id: true } })) throw roleNameTaken()
+  const permissionIds = await resolvePermissionIds(v.permissions)
+
+  try {
+    await prismaClient.$transaction(async (tx) => {
+      await tx.role.create({ data: { name: v.name } })
+      await tx.rolePermission.createMany({ data: permissionIds.map((permissionId) => ({ roleName: v.name, permissionId })) })
+    })
+  } catch (error) {
+    if (isUniqueViolation(error, 'name')) throw roleNameTaken()
+    throw error
+  }
+
+  return loadRoleDto(v.name)
+}
+
+/**
+ * PATCH /api/admin/settings/roles/:name — ganti nama role.
+ *
+ * RolePermission berkunci NAMA role, jadi barisnya ikut dipindah dalam transaksi yang sama. Role bawaan yang
+ * belum pernah disimpan dari layar ini tidak punya baris dan memakai default shared/permissions.ts MENURUT
+ * NAMA — setelah ganti nama default itu tak lagi berlaku, jadi hak akses efektifnya ditulis sebagai baris
+ * lebih dulu (akun di role itu tidak kehilangan akses). Akun staf berelasi lewat roleId, tidak tersentuh.
+ */
+export async function renameRole(actor: SettingsActor, roleName: string, request: unknown): Promise<AdminRoleDto> {
+  const role = await prismaClient.role.findUnique({ where: { name: roleName }, select: { id: true, name: true } })
+  if (!role) throw new ResponseError(404, 'Role tidak ditemukan.')
+
+  assertAdministrator(actor, 'Hanya Administrator yang dapat mengubah role.')
+  if (isAdministrator(role.name)) throw new ResponseError(403, 'Role Administrator tidak dapat diubah.', 'FORBIDDEN')
+
+  const v = Validation.validate(SettingsAdminValidation.ROLE_RENAME, request)
+  if (v.name === role.name) return loadRoleDto(role.name)
+
+  // Kolasi tidak membedakan huruf besar-kecil: 'finance' -> 'Finance' menemukan role ini sendiri, dan itu sah.
+  const clash = await prismaClient.role.findUnique({ where: { name: v.name }, select: { id: true } })
+  if (clash && clash.id !== role.id) throw roleNameTaken()
+
+  const effective = await getPermissionsByRole(role.name)
+
+  try {
+    await prismaClient.$transaction(async (tx) => {
+      const rows = await tx.rolePermission.count({ where: { roleName: role.name } })
+      if (rows > 0) {
+        await tx.rolePermission.updateMany({ where: { roleName: role.name }, data: { roleName: v.name } })
+      } else if (effective.length > 0) {
+        const permissions = await tx.permission.findMany({ where: { code: { in: effective } }, select: { id: true } })
+        await tx.rolePermission.createMany({ data: permissions.map((permission) => ({ roleName: v.name, permissionId: permission.id })) })
+      }
+      await tx.role.update({ where: { id: role.id }, data: { name: v.name } })
+    })
+  } catch (error) {
+    if (isUniqueViolation(error, 'name')) throw roleNameTaken()
+    throw error
+  }
+
+  return loadRoleDto(v.name)
+}
+
+/**
+ * DELETE /api/admin/settings/roles/:name — hapus role yang TIDAK dipakai akun mana pun.
+ *
+ * Role yang masih dipakai ditolak 422 (akunnya dipindah dulu dari halaman Pengguna Internal): menghapusnya
+ * akan membuat akun staf kehilangan role dan diam-diam diperlakukan sebagai pelanggan (login staf dan
+ * denyStaffAccounts membaca keberadaan role). Role bawaan boleh dihapus; seeder membuatnya lagi bila dijalankan.
+ */
+export async function deleteRole(actor: SettingsActor, roleName: string): Promise<{ name: string }> {
+  const role = await prismaClient.role.findUnique({
+    where: { name: roleName },
+    select: { id: true, name: true, _count: { select: { users: true } } }
+  })
+  if (!role) throw new ResponseError(404, 'Role tidak ditemukan.')
+
+  assertAdministrator(actor, 'Hanya Administrator yang dapat menghapus role.')
+  if (isAdministrator(role.name)) throw new ResponseError(403, 'Role Administrator tidak dapat dihapus.', 'FORBIDDEN')
+
+  if (role._count.users > 0) {
+    throw new ResponseError(
+      422,
+      `Role ${role.name} masih dipakai ${role._count.users} akun staf. Pindahkan akun tersebut ke role lain dulu di halaman Pengguna Internal.`,
+      'VALIDATION_ERROR'
+    )
+  }
+
+  await prismaClient.$transaction([
+    prismaClient.rolePermission.deleteMany({ where: { roleName: role.name } }),
+    prismaClient.role.delete({ where: { id: role.id } })
+  ])
+
+  return { name: role.name }
 }
 
 // ============================================================================
@@ -304,15 +412,14 @@ function toStaffUser(row: StaffUserRow): AdminStaffUserDto {
 }
 
 /**
- * Terjemahkan nama role internal -> roles.id.
- *
- * Aturan `in:` di validasi sudah memastikan namanya salah satu dari empat role internal, jadi cabang
- * "tidak ditemukan" hanya tercapai bila tabel roles belum di-seed. Dibalas 422 yang menempel ke field
- * `role` alih-alih 500, supaya panel menampilkan sebab yang bisa dibaca.
+ * Terjemahkan nama role -> roles.id. Daftar role kini di tabel roles (bisa ditambah dari Role & Access).
+ * Administrator tetap TIDAK bisa diberikan dari halaman ini — akun Administrator dibuat lewat seeder.
+ * Dibalas 422 yang menempel ke field `role`, supaya panel menampilkan sebab yang bisa dibaca.
  */
 async function internalRoleIdFor(name: string): Promise<string> {
-  const role = await prismaClient.role.findUnique({ where: { name }, select: { id: true } })
+  const role = await prismaClient.role.findUnique({ where: { name }, select: { id: true, name: true } })
   if (!role) throw new ResponseError(422, 'Role tidak ditemukan.', 'VALIDATION_ERROR', { role: ['Role tidak ditemukan.'] })
+  if (isAdministrator(role.name)) throw new ResponseError(422, 'Role tidak valid.', 'VALIDATION_ERROR', { role: ['Role tidak valid.'] })
   return role.id
 }
 
@@ -350,15 +457,16 @@ function emailConflict(error: unknown): ResponseError | null {
  * urutan nama tetap terjaga.
  */
 export async function listStaffUsers(actor: SettingsActor): Promise<AdminStaffUserIndexDto> {
-  const rows = await prismaClient.user.findMany({
-    where: { role: { name: { in: [...STAFF_ROLES] } } },
-    select: STAFF_USER_SELECT,
-    orderBy: { name: 'asc' }
-  })
+  // Staf = akun yang punya role (pelanggan tidak pernah punya role) — termasuk role buatan panel.
+  const [rows, roleRows] = await Promise.all([
+    prismaClient.user.findMany({ where: { roleId: { not: null } }, select: STAFF_USER_SELECT, orderBy: { name: 'asc' } }),
+    prismaClient.role.findMany({ where: { name: { not: ADMINISTRATOR_ROLE } }, select: { name: true }, orderBy: { name: 'asc' } })
+  ])
 
   const users = rows.map(toStaffUser).sort((a, b) => staffRoleRank(a.role) - staffRoleRank(b.role))
+  const roles = roleRows.map((role) => role.name).sort((a, b) => staffRoleRank(a) - staffRoleRank(b))
 
-  return { users, roles: [...INTERNAL_ROLES], canManageUsers: actor.bypass }
+  return { users, roles, canManageUsers: actor.bypass }
 }
 
 /**

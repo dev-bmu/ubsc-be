@@ -8,6 +8,9 @@ import { requirePermission } from '../../middleware/permission-middleware'
 //
 //   GET /api/admin/settings/roles         staf mana pun (tanpa permission)  -> AdminRoleIndexDto
 //   PUT /api/admin/settings/roles/:name   rbac.manage + Administrator saja  -> AdminRoleDto
+//   POST /api/admin/settings/roles        rbac.manage + Administrator saja  -> 201 AdminRoleDto (role baru, 2026-10-20)
+//   PATCH /api/admin/settings/roles/:name rbac.manage + Administrator saja  -> AdminRoleDto (ganti nama)
+//   DELETE /api/admin/settings/roles/:name rbac.manage + Administrator saja -> { name } (hanya role tanpa akun)
 //
 // :name adalah NAMA role ('Manager', 'Staff Front Office'), bukan uuid: RolePermission.roleName
 // memang berkunci nama (prisma/schema.prisma) dan AdminRoleDto tidak membawa id.
@@ -53,6 +56,9 @@ import { requirePermission } from '../../middleware/permission-middleware'
 const adminSettingsRoleRoutes = express.Router()
 
 adminSettingsRoleRoutes.get('/', ctrl.rolesIndex)
+adminSettingsRoleRoutes.post('/', requirePermission(PERMISSIONS.RBAC_MANAGE), ctrl.rolesStore)
 adminSettingsRoleRoutes.put('/:name', requirePermission(PERMISSIONS.RBAC_MANAGE), ctrl.rolesUpdate)
+adminSettingsRoleRoutes.patch('/:name', requirePermission(PERMISSIONS.RBAC_MANAGE), ctrl.rolesRename)
+adminSettingsRoleRoutes.delete('/:name', requirePermission(PERMISSIONS.RBAC_MANAGE), ctrl.rolesDestroy)
 
 export default adminSettingsRoleRoutes

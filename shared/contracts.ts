@@ -1979,6 +1979,17 @@ export interface RolePermissionsPayload {
   permissions: string[]
 }
 
+/** POST /api/admin/settings/roles — role baru (hanya Administrator). Minimal satu hak akses. */
+export interface RoleCreatePayload {
+  name: string
+  permissions: string[]
+}
+
+/** PATCH /api/admin/settings/roles/:name — ganti nama role (hanya Administrator; Administrator sendiri ditolak). */
+export interface RoleRenamePayload {
+  name: string
+}
+
 // ---- Schedules ----
 export interface AdminScheduleMonthDto {
   month: number
@@ -2020,7 +2031,7 @@ export interface AdminStaffUserDto {
 /** GET /api/admin/settings/users — staf saja, diurut nama lalu dirapikan per urutan role. */
 export interface AdminStaffUserIndexDto {
   users: AdminStaffUserDto[]
-  /** Role yang boleh diberikan dari halaman ini — Administrator TIDAK termasuk. */
+  /** Role yang boleh diberikan dari halaman ini (dari tabel roles, termasuk role buatan panel) — Administrator TIDAK termasuk. */
   roles: string[]
   canManageUsers: boolean
 }

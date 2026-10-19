@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ADMINISTRATOR_ROLE, STAFF_ROLES } from '../config/permissions'
+import { ADMINISTRATOR_ROLE } from '../config/permissions'
 
 // ===== Validasi pengaturan sistem: Role & Access + Pengguna Internal (Fase 8G) =====
 // Port aturan $request->validate() di Admin\RoleController::update dan Admin\UserController::store/update.
@@ -11,13 +11,34 @@ import { ADMINISTRATOR_ROLE, STAFF_ROLES } from '../config/permissions'
 // (settings-admin-services.ts), bukan di sini.
 
 /**
- * Role yang boleh DIBERIKAN dari halaman staff = `UserController::INTERNAL_ROLES` Laravel.
- *
- * Diturunkan dari STAFF_ROLES di shared/permissions.ts dikurangi Administrator, BUKAN disalin
- * sebagai literal baru: daftar role staff hanya boleh ditulis di satu tempat. Administrator sengaja
- * tidak assignable — akun Administrator dibuat lewat seeder, bukan lewat panel.
+ * Nama yang tidak boleh dipakai role buatan panel (dibandingkan tanpa beda huruf besar-kecil):
+ *   - Administrator: satu-satunya role ber-bypass, dikenali dari NAMA-nya (isAdministrator).
+ *   - Customer: label cookie sesi pelanggan (CUSTOMER_ROLE_LABEL di auth-services) — role staf bernama
+ *     sama hanya membingungkan.
  */
-export const INTERNAL_ROLES: string[] = STAFF_ROLES.filter((role) => role !== ADMINISTRATOR_ROLE)
+const RESERVED_ROLE_NAMES = [ADMINISTRATOR_ROLE, 'Customer'].map((name) => name.toLowerCase())
+
+/**
+ * Nama role buatan panel. Spasi di tengah dirapikan jadi satu supaya 'Staff  Gudang' dan 'Staff Gudang'
+ * tidak menjadi dua role. Karakter dibatasi huruf/angka/spasi dan sedikit tanda baca karena nama role
+ * ikut menjadi segmen URL (PUT/PATCH/DELETE /api/admin/settings/roles/:name) dan nilai cookie ubsc_s_role.
+ */
+const roleNameField = z.preprocess(
+  (value) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value),
+  z
+    .string({ error: 'Nama role wajib diisi.' })
+    .min(2, { error: 'Nama role minimal 2 karakter.' })
+    .max(50, { error: 'Nama role maksimal 50 karakter.' })
+    .regex(/^[\p{L}\p{N}][\p{L}\p{N} &().'-]*$/u, { error: "Nama role hanya boleh berisi huruf, angka, spasi, dan tanda & ( ) . ' -" })
+    .refine((value) => !RESERVED_ROLE_NAMES.includes(value.toLowerCase()), { error: 'Nama role ini dipakai sistem. Pilih nama lain.' })
+)
+
+/** Daftar kode permission; `exists:permissions` dicek service per-index (permissions.0, permissions.1, ...). */
+const permissionCodesField = z
+  .array(z.string({ error: 'Hak akses tidak valid.' }).trim().min(1, { error: 'Hak akses tidak valid.' }), {
+    error: 'Daftar hak akses tidak valid.'
+  })
+  .min(1, { error: 'Pilih minimal satu hak akses.' })
 
 /** Laravel TrimStrings berjalan sebelum validasi, jadi ' a@b.c ' memang sah di sana. */
 const trimString = (value: unknown): unknown => (typeof value === 'string' ? value.trim() : value)
@@ -61,11 +82,11 @@ const passwordRules = z.string({ error: 'Password wajib diisi.' }).min(8, { erro
   error: 'Password maksimal 100 karakter.'
 })
 
-/** `required|in:Manager,Finance,Staff Central,Staff Front Office`. */
-const roleField = z
-  .string({ error: 'Role wajib dipilih.' })
-  .trim()
-  .refine((value) => INTERNAL_ROLES.includes(value), { error: 'Role tidak valid.' })
+/**
+ * Nama role tujuan akun staf. Daftar role kini ada di tabel roles (bisa ditambah dari Role & Access), jadi
+ * keberadaannya — dan larangan memberi role Administrator — dicek service (internalRoleIdFor).
+ */
+const roleField = z.string({ error: 'Role wajib dipilih.' }).trim().min(1, { error: 'Role wajib dipilih.' }).max(50, { error: 'Role tidak valid.' })
 
 export class SettingsAdminValidation {
   /**
@@ -79,11 +100,23 @@ export class SettingsAdminValidation {
    * melempar 422 per-index (`permissions.0`, `permissions.1`, ...) persis seperti kunci field Laravel.
    */
   static readonly ROLE_PERMISSIONS = z.object({
-    permissions: z
-      .array(z.string({ error: 'Hak akses tidak valid.' }).trim().min(1, { error: 'Hak akses tidak valid.' }), {
-        error: 'Daftar hak akses tidak valid.'
-      })
-      .min(1, { error: 'Pilih minimal satu hak akses.' })
+    permissions: permissionCodesField
+  })
+
+  /**
+   * POST /api/admin/settings/roles — role baru (BARU 2026-10-20, tidak ada di Laravel). Minimal satu hak
+   * akses, sama dengan update: role tanpa baris role_permissions jatuh ke default shared/permissions.ts
+   * menurut NAMA-nya, dan role baru yang kebetulan bernama sama dengan role bawaan yang pernah dihapus akan
+   * diam-diam mewarisi hak akses bawaannya.
+   */
+  static readonly ROLE_CREATE = z.object({
+    name: roleNameField,
+    permissions: permissionCodesField
+  })
+
+  /** PATCH /api/admin/settings/roles/:name — ganti nama role. */
+  static readonly ROLE_RENAME = z.object({
+    name: roleNameField
   })
 
   /** POST /api/admin/settings/users — password WAJIB. */

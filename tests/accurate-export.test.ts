@@ -352,12 +352,14 @@ describe('penerimaan penjualan', () => {
       message: expect.stringContaining('Pembayaran > Pengaturan Pembayaran')
     })
 
+    // Pengaturan pembayaran sejak 2026-10-20: payments.settings.manage (default hanya Administrator).
     const finance = bearer(await createStaff('Finance'), 'staff')
+    const admin = bearer(await createStaff('Administrator'), 'staff')
     const settings = { bankName: '', accountNumber: '', accountHolder: '', qrisMerchantName: '', holdMinutes: 120, uniqueCodeMax: 999 }
     const post = (accurateCashAccountNo: string, accurateUniqueCodeItemNo = ` ${CODE_ITEM} `) =>
       request(web)
         .post('/api/admin/payments/settings')
-        .set('Authorization', finance)
+        .set('Authorization', admin)
         .send({ ...settings, accurateCashAccountNo, accurateUniqueCodeItemNo })
     await post('9'.repeat(31)).expect(400)
     await post(ACCOUNT, '9'.repeat(31)).expect(400)
