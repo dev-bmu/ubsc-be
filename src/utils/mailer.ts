@@ -26,7 +26,8 @@ import { logger } from './logger'
 //     yang macet menggantung request. Di sini risiko itu sudah ditutup
 //     socketTimeout + kiriman di luar request (butir 2-4), jadi 587 boleh
 //     dipakai bila jaringan memblokir 465 — ditemukan 2026-09-28: jaringan dev
-//     memblokir 465 lewat IPv4, sedangkan nodemailer selalu memakai IPv4.
+//     memblokir 465 lewat IPv4, sedangkan nodemailer 7 selalu memakai IPv4
+//     (sejak nodemailer 10 IPv6 ikut dicoba lebih dulu, RFC 8305).
 //     Di 587 STARTTLS DIWAJIBKAN (requireTLS), supaya login tidak pernah
 //     terkirim polos bila STARTTLS dilucuti di tengah jalan.
 //  2. Kirim SETELAH transaksi bisnis commit. Setiap penulisan sudah permanen
@@ -69,7 +70,9 @@ function getTransporter(): Transporter {
     secure: MAIL_SECURE,
     requireTLS: !MAIL_SECURE,
     auth: MAIL_USER && MAIL_PASSWORD ? { user: MAIL_USER, pass: MAIL_PASSWORD } : undefined,
-    // Tiga batas terpisah: koneksi TCP, greeting SMTP, dan socket idle. Tanpa
+    // Tiga batas (semantik nodemailer 10): connectionTimeout untuk seluruh
+    // penyiapan sesi (DNS, TCP/TLS, greeting, STARTTLS), greetingTimeout untuk
+    // greeting dan STARTTLS di dalamnya, socketTimeout untuk socket idle. Tanpa
     // ketiganya, server yang menerima koneksi lalu diam akan menggantung
     // selamanya.
     connectionTimeout: MAIL_TIMEOUT_MS,
