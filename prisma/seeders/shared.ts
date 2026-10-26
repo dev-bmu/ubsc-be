@@ -22,7 +22,9 @@ function createAdapter(urlString: string) {
     port: url.port ? Number(url.port) : 3306,
     user: decodeURIComponent(url.username),
     password: decodeURIComponent(url.password),
-    database: url.pathname.replace(/^\//, '') || undefined
+    database: url.pathname.replace(/^\//, '') || undefined,
+    // Lihat catatan di src/application/database.ts: tanpa ini seed gagal konek setelah MySQL restart.
+    allowPublicKeyRetrieval: true
   })
 }
 

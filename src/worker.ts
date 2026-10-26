@@ -57,7 +57,11 @@ async function bootstrap(): Promise<void> {
      */
     connectionLimit: 1,
     idleTimeout: env.DB_POOL_IDLE_TIMEOUT,
-    // Sama seperti client API — lihat catatan foundRows di application/database.ts.
+    // Sama seperti client API — lihat catatan allowPublicKeyRetrieval dan foundRows di application/database.ts.
+    allowPublicKeyRetrieval: true,
+    connectTimeout: 10000,
+    acquireTimeout: 20000,
+    minDelayValidation: 30000,
     foundRows: true
   })
 

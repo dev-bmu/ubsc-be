@@ -32,6 +32,18 @@ export function createAdapter(urlString: string, connectionLimit: number = DB_CO
     connectionLimit,
     idleTimeout,
     /**
+     * MySQL 8 memakai caching_sha2_password. Setelah MySQL restart, cache auth server kosong dan
+     * server meminta password terenkripsi RSA. Tanpa opsi ini driver tidak bisa mengambil public
+     * key-nya, SEMUA pembuatan koneksi gagal, dan Prisma hanya melapor "pool failed to retrieve a
+     * connection from pool (active=0 idle=0)". Aman karena DATABASE_URL menunjuk localhost.
+     * Setelan di bawahnya sama dengan HR-BMU/APPS-BMU yang sudah stabil: default driver
+     * (connectTimeout 1000ms) terlalu ketat saat pool dingin diisi sambil kena burst login.
+     */
+    allowPublicKeyRetrieval: true,
+    connectTimeout: 10000,
+    acquireTimeout: 20000,
+    minDelayValidation: 30000,
+    /**
      * Di-pin eksplisit: arti affectedRows `$executeRaw` UPDATE tidak boleh bergantung pada default
      * driver. `true` (CLIENT_FOUND_ROWS) = baris yang COCOK dengan WHERE; `false` = baris yang
      * nilainya benar-benar BERUBAH.
