@@ -226,6 +226,17 @@ tetap sebagai sejarah; yang berlaku sekarang:
   jatuh ke 999, supaya checkout tidak gagal `PENDING_TOTAL_EXHAUSTED` karena rentang kosong.
 - Ringkasan sebelum bayar di landing: "+ kode unik Rp501–Rp999".
 
+### 2.9 Revisi 2026-10-29: kode unik kembali 1–500
+
+Biaya admin tetap dihapus (2.8). Kode unik kembali mulai dari 1: `CODE_MIN = 1`, default
+`payment_unique_code_max` 500, batas yang boleh disetel 100–999 (tetap minimal 100 kode per nominal).
+Nilai tersimpan di luar 100–999 jatuh ke 500. Landing membaca `uniqueCodeMin`/`uniqueCodeMax` dari API,
+jadi teksnya ikut berubah tanpa edit.
+
+Tanpa migrasi. Transaksi 501–999 yang masih terbuka tetap berlaku sampai lunas/ditolak/kedaluwarsa:
+`candidateCodes()` menyaring total yang sudah dipegang transfer terbuka di nominal mana pun, dan UNIQUE
+`pendingTotal` menolak sisanya.
+
 ---
 
 ## 3. Fitur 2 — E-Card, check-in gym, dan analitik jam ramai

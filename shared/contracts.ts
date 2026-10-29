@@ -1362,7 +1362,7 @@ export interface PaymentSettingsDto {
   /** null = gambar QRIS belum diunggah (POST /api/admin/payments/settings/qris). */
   qris: PaymentQrisDto | null
   holdMinutes: number
-  /** Batas atas kode unik (600..999); kode unik diacak 501..nilai ini. */
+  /** Batas atas kode unik (100..999); kode unik diacak 1..nilai ini. */
   uniqueCodeMax: number
   /** Kode akun Kas/Bank Accurate untuk export Penerimaan Penjualan; '' = belum diisi. */
   accurateCashAccountNo: string
@@ -1390,7 +1390,7 @@ export interface PaymentSettingsPayload {
   /** Nama merchant yang tercetak di QRIS; '' boleh. Gambarnya lewat endpoint unggah tersendiri. */
   qrisMerchantName: string
   holdMinutes: number
-  /** 600..999. */
+  /** 100..999. */
   uniqueCodeMax: number
   /** Maks 30 karakter; '' boleh (export Penerimaan Penjualan lalu ditolak sampai diisi). */
   accurateCashAccountNo: string
@@ -1564,7 +1564,7 @@ export interface MembershipCheckoutPreviewDto {
   amount: number
   priceCategory: UserCategory
   identityStatus: IdentityStatus
-  /** Kode unik (uniqueCodeMin..uniqueCodeMax, mis. 501..999) baru diketahui setelah checkout. Tanpa biaya admin. */
+  /** Kode unik (uniqueCodeMin..uniqueCodeMax, mis. 1..500) baru diketahui setelah checkout. Tanpa biaya admin. */
   uniqueCodeMin: number
   uniqueCodeMax: number
   /**

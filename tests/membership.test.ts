@@ -75,8 +75,8 @@ describe('overlap', () => {
     const transaction = await prismaClient.transaction.findUniqueOrThrow({ where: { membershipId: membership.id } })
     // Transfer terbuka tanpa batas waktu sebesar harga + kode unik (tanpa biaya admin) — FO yang menandai lunas.
     expect(transaction).toMatchObject({ paymentStatus: 'UNPAID', amount: 300_000, adminFee: 0, expiresAt: null })
-    expect(transaction.uniqueCode).toBeGreaterThanOrEqual(501)
-    expect(transaction.uniqueCode).toBeLessThanOrEqual(999)
+    expect(transaction.uniqueCode).toBeGreaterThanOrEqual(1)
+    expect(transaction.uniqueCode).toBeLessThanOrEqual(500)
     expect(transaction.pendingTotal).toBe(300_000 + (transaction.uniqueCode as number))
     const history = await prismaClient.membershipHistory.findFirstOrThrow({ where: { membershipId: membership.id } })
     expect(history).toMatchObject({ action: 'created', transactionId: transaction.id })
@@ -362,7 +362,7 @@ describe('tahap C: tarif Warga UB + checkout web', () => {
     expect(await membershipCheckoutPreview(user, wargaPlanId)).toMatchObject({
       amount: 200_000,
       priceCategory: 'warga_ub',
-      uniqueCodeMin: 501,
+      uniqueCodeMin: 1,
       startsAfterCurrent: null,
       pendingMembershipId: null,
       memberPhotoStatus: 'pending'

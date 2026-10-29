@@ -91,7 +91,7 @@ describe('pelanggan', () => {
     })
     const { adminFee, uniqueCode, total, receiptNumber } = payment.body.data.payment
     expect(adminFee).toBe(0)
-    expect(uniqueCode).toBeGreaterThan(500)
+    expect(uniqueCode).toBeLessThanOrEqual(500)
     expect(total).toBe(250_000 + uniqueCode)
     expect(receiptNumber).toMatch(/^UBSC-X-2026-\d{4}$/)
 
@@ -317,7 +317,7 @@ describe('checkout membership lewat HTTP (tahap C)', () => {
       .expect(200)
 
     const preview = await request(web).get(`/api/customer/memberships/checkout/${plan.id}`).set('Authorization', auth).expect(200)
-    expect(preview.body.data).toMatchObject({ amount: 150_000, uniqueCodeMin: 501, uniqueCodeMax: 999, adminFee: 0, pendingMembershipId: null })
+    expect(preview.body.data).toMatchObject({ amount: 150_000, uniqueCodeMin: 1, uniqueCodeMax: 500, adminFee: 0, pendingMembershipId: null })
 
     const created = await request(web).post('/api/customer/memberships').set('Authorization', auth).send({ membershipPlanId: plan.id }).expect(201)
     const { membershipId } = created.body.data

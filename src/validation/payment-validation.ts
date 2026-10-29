@@ -14,9 +14,9 @@ const emptyToUndefined = (value: unknown): unknown =>
 const HOLD_REQUIRED = 'Durasi hold wajib diisi.'
 const HOLD_RANGE = 'Durasi hold harus antara 15 dan 1440 menit.'
 const CODE_MAX_REQUIRED = 'Batas kode unik wajib diisi.'
-// Kode unik dimulai dari 501 (CODE_MIN): batas atas minimal 600 supaya satu nominal muat 100 transfer
+// Kode unik dimulai dari 1 (CODE_MIN): batas atas minimal 100 supaya satu nominal muat 100 transfer
 // terbuka sebelum checkout ditolak 409. Sama dengan CODE_MAX_FLOOR..CODE_MAX_LIMIT di manual-payment-services.
-const CODE_MAX_RANGE = 'Batas kode unik harus antara 600 dan 999.'
+const CODE_MAX_RANGE = 'Batas kode unik harus antara 100 dan 999.'
 
 /** Bilangan bulat wajib dalam rentang, dari angka atau string form. */
 const requiredInt = (required: string, min: number, max: number, range: string) =>
@@ -79,7 +79,7 @@ export class PaymentValidation {
         .min(15, { error: HOLD_RANGE })
         .max(1440, { error: HOLD_RANGE })
     ),
-    uniqueCodeMax: requiredInt(CODE_MAX_REQUIRED, 600, 999, CODE_MAX_RANGE),
+    uniqueCodeMax: requiredInt(CODE_MAX_REQUIRED, 100, 999, CODE_MAX_RANGE),
     /** Kolom EXPENSE ACCOUNT NO export Penerimaan Penjualan Accurate (template: maks 30). Boleh kosong. */
     accurateCashAccountNo: optionalText(30, 'Kode akun Kas/Bank Accurate maksimal 30 karakter.'),
     /** Barang/jasa Accurate untuk baris kode unik export Faktur Penjualan (maks 30 seperti nomor item lain). Boleh kosong. */

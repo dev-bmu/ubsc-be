@@ -187,7 +187,7 @@ describe('balapan pada slot terakhir', () => {
 describe('kode unik pendingTotal di bawah balapan (R11)', () => {
   it('sembilan checkout bersamaan berebut sembilan kode tersisa: semua lolos dengan total berbeda, yang kesepuluh gagal bersih', async () => {
     const amount = 777_000
-    // Nominal dasar = harga (tanpa biaya admin sejak 2026-10-08). Isi semua kode 501..999 kecuali
+    // Nominal dasar = harga (tanpa biaya admin sejak 2026-10-08). Isi semua kode CODE_MIN..DEFAULT_UNIQUE_CODE_MAX kecuali
     // sembilan — tabrakan di UNIQUE index menjadi pasti, bukan kebetulan.
     const base = amount
     const prefilled = DEFAULT_UNIQUE_CODE_MAX - CODE_MIN + 1 - 9

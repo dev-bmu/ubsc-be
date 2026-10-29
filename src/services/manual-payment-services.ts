@@ -41,21 +41,24 @@ type Db = Prisma.TransactionClient
 /** Pembaca setting: klien biasa, atau klien transaksi supaya dibaca di koneksi yang sama. */
 type SettingsDb = Pick<Prisma.TransactionClient, 'systemSetting'>
 
-/** Revisi client 2026-10-08: kode unik selalu LEBIH dari 500 (tiga digit terakhir 501..999). */
-export const CODE_MIN = 501
+/**
+ * Revisi 2026-10-29: kode unik kembali mulai dari 1 (1..payment_unique_code_max, default 500). Rentang
+ * 501..999 dari revisi client 2026-10-08 dibatalkan; transaksi lama tetap membawa kodenya sendiri.
+ */
+export const CODE_MIN = 1
 /** Kode ditambahkan ke harga, jadi batas atasnya di bawah 1000. */
 export const CODE_MAX_LIMIT = 999
 /** Batas atas terkecil yang boleh disetel — minimal 100 kode per nominal. */
-export const CODE_MAX_FLOOR = 600
+export const CODE_MAX_FLOOR = 100
 /** Batas percobaan alokasi kode (R11) — setelah itu gagal bersih, tidak berputar. */
 const CODE_ATTEMPTS = 25
 
 export const DEFAULT_HOLD_MINUTES = 15
 /**
  * Revisi client 2026-10-08: biaya admin DIHAPUS (transaksi baru selalu adminFee 0; kolomnya tetap untuk
- * transaksi lama) dan kode unik 501..999.
+ * transaksi lama). Batas kode unik default 500 sejak revisi 2026-10-29.
  */
-export const DEFAULT_UNIQUE_CODE_MAX = 999
+export const DEFAULT_UNIQUE_CODE_MAX = 500
 
 // ===== Pengaturan =====
 
@@ -70,8 +73,8 @@ export async function holdMinutes(): Promise<number> {
 }
 
 /**
- * Batas atas kode unik. Kapasitas transfer terbuka bersamaan per nominal = nilai ini - 500. Nilai
- * tersimpan di luar 600..999 (mis. 500 dari aturan lama — menyisakan nol kode) jatuh ke default.
+ * Batas atas kode unik. Kapasitas transfer terbuka bersamaan per nominal = nilai ini (kode mulai dari 1).
+ * Nilai tersimpan di luar CODE_MAX_FLOOR..CODE_MAX_LIMIT jatuh ke default.
  */
 export async function uniqueCodeMax(db?: SettingsDb): Promise<number> {
   const configured = Math.trunc(Number(await setting('payment_unique_code_max', String(DEFAULT_UNIQUE_CODE_MAX), db)))
@@ -210,7 +213,7 @@ export interface TransferSubject {
 
 /**
  * Buka transfer untuk subject senilai `amount` rupiah. Pelanggan mentransfer amount + kode unik
- * (501..uniqueCodeMax), satu kode per transaksi — paket N sesi tetap satu. Tanpa biaya admin sejak
+ * (CODE_MIN..uniqueCodeMax), satu kode per transaksi — paket N sesi tetap satu. Tanpa biaya admin sejak
  * revisi client 2026-10-08: adminFee selalu 0 (transaksi lama tetap membawa biayanya).
  *
  * WAJIB dipanggil di dalam transaksi yang sudah memegang kunci yang dibutuhkan pemanggil; fungsi ini

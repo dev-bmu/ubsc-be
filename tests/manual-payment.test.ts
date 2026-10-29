@@ -366,11 +366,11 @@ describe('job payments:release-expired', () => {
   })
 })
 
-describe('kode unik 501..999 tanpa biaya admin (revisi client 2026-10-08)', () => {
+describe('kode unik 1..500 tanpa biaya admin (revisi 2026-10-29)', () => {
   const setSetting = (key: string, value: string) => prismaClient.systemSetting.upsert({ where: { key }, update: { value }, create: { key, value } })
   const transactionOf = (id: string) => prismaClient.transaction.findUniqueOrThrow({ where: { id } })
 
-  it('transfer web: harga + kode 501..999, adminFee 0, dan paket N sesi tetap satu transaksi', async () => {
+  it('transfer web: harga + kode 1..500, adminFee 0, dan paket N sesi tetap satu transaksi', async () => {
     setNowForTests(FROZEN_NOW)
     const court = await bookCourt('2026-10-26')
     const pkg = await bookPackage()
@@ -378,38 +378,70 @@ describe('kode unik 501..999 tanpa biaya admin (revisi client 2026-10-08)', () =
     for (const { transactionId } of [court, pkg]) {
       const t = await transactionOf(transactionId)
       expect(t.adminFee).toBe(0)
-      expect(t.uniqueCode).toBeGreaterThanOrEqual(501)
-      expect(t.uniqueCode).toBeLessThanOrEqual(999)
+      expect(t.uniqueCode).toBeGreaterThanOrEqual(1)
+      expect(t.uniqueCode).toBeLessThanOrEqual(500)
       expect(t.pendingTotal).toBe(t.amount + (t.uniqueCode as number))
     }
     const sessionIds = (await groupOf(pkg.bookingId)).map((b) => b.id)
     expect(await prismaClient.transaction.count({ where: { bookingId: { in: sessionIds } } })).toBe(1)
   })
 
-  it('setting payment_admin_fee lama diabaikan; batas kode berlaku; nilai lama 500 jatuh ke 999', async () => {
+  it('setting payment_admin_fee lama diabaikan; batas kode berlaku; nilai di luar 100..999 jatuh ke 500', async () => {
     setNowForTests(FROZEN_NOW)
     await setSetting('payment_admin_fee', '500')
-    await setSetting('payment_unique_code_max', '600')
+    await setSetting('payment_unique_code_max', '100')
     try {
       const capped = await transactionOf((await bookCourt('2026-10-27')).transactionId)
       expect(capped.adminFee).toBe(0)
-      expect(capped.uniqueCode).toBeGreaterThanOrEqual(501)
-      expect(capped.uniqueCode).toBeLessThanOrEqual(600)
+      expect(capped.uniqueCode).toBeGreaterThanOrEqual(1)
+      expect(capped.uniqueCode).toBeLessThanOrEqual(100)
       expect(capped.pendingTotal).toBe(capped.amount + (capped.uniqueCode as number))
 
-      // Prod masih bisa menyimpan 500 (aturan lama): tanpa fallback rentangnya 501..500 = kosong dan
-      // setiap checkout gagal PENDING_TOTAL_EXHAUSTED.
-      await setSetting('payment_unique_code_max', '500')
+      // Nilai rusak di DB (diedit tangan) tidak boleh menyempitkan rentang sampai checkout gagal
+      // PENDING_TOTAL_EXHAUSTED.
+      await setSetting('payment_unique_code_max', '50')
       expect(await uniqueCodeMax()).toBe(DEFAULT_UNIQUE_CODE_MAX)
       const fallback = await transactionOf((await bookCourt('2026-10-27')).transactionId)
-      expect(fallback.uniqueCode).toBeGreaterThanOrEqual(501)
-      expect(fallback.uniqueCode).toBeLessThanOrEqual(999)
+      expect(fallback.uniqueCode).toBeGreaterThanOrEqual(1)
+      expect(fallback.uniqueCode).toBeLessThanOrEqual(500)
     } finally {
       await prismaClient.systemSetting.deleteMany({ where: { key: { in: ['payment_admin_fee', 'payment_unique_code_max'] } } })
     }
   })
 
-  it('pengaturan: adminFee tidak lagi diterima atau dikembalikan; batas kode 600..999', async () => {
+  it('transfer lama 501..999 yang masih terbuka di nominal lain tidak bentrok dengan kode baru', async () => {
+    setNowForTests(FROZEN_NOW)
+    await setSetting('payment_unique_code_max', '100')
+    try {
+      const { amount } = await transactionOf((await bookCourt('2026-10-28')).transactionId)
+      const held = await prismaClient.transaction.findMany({
+        where: { pendingTotal: { gte: amount + 1, lte: amount + 100 } },
+        select: { pendingTotal: true }
+      })
+      const taken = new Set(held.map((t) => t.pendingTotal))
+      const free = Array.from({ length: 100 }, (_, i) => amount + 1 + i).filter((total) => !taken.has(total))
+      const last = free.pop() as number
+      // Transfer aturan lama (harga 600 lebih murah + kode 601..700) memegang semua total bebas kecuali satu.
+      await prismaClient.transaction.createMany({
+        data: free.map((total, i) => ({
+          amount: amount - 600,
+          uniqueCode: total - (amount - 600),
+          pendingTotal: total,
+          invoiceNumber: `LAMA-${i + 1}`,
+          paymentStatus: 'UNPAID' as const
+        }))
+      })
+
+      const next = await transactionOf((await bookCourt('2026-10-28')).transactionId)
+      expect(next.pendingTotal).toBe(last)
+      expect(next.uniqueCode).toBe(last - amount)
+    } finally {
+      await prismaClient.transaction.deleteMany({ where: { invoiceNumber: { startsWith: 'LAMA-' } } })
+      await prismaClient.systemSetting.deleteMany({ where: { key: 'payment_unique_code_max' } })
+    }
+  })
+
+  it('pengaturan: adminFee tidak lagi diterima atau dikembalikan; batas kode 100..999', async () => {
     const base = {
       bankName: 'BCA',
       accountNumber: '1234567890',
@@ -418,13 +450,14 @@ describe('kode unik 501..999 tanpa biaya admin (revisi client 2026-10-08)', () =
       holdMinutes: HOLD_MINUTES
     }
     try {
-      const saved = await updatePaymentSettings({ ...base, adminFee: 500, uniqueCodeMax: 600 })
+      const saved = await updatePaymentSettings({ ...base, adminFee: 500, uniqueCodeMax: 500 })
       expect(saved).not.toHaveProperty('adminFee')
-      expect(saved.uniqueCodeMax).toBe(600)
+      expect(saved.uniqueCodeMax).toBe(500)
       expect(await prismaClient.systemSetting.findUnique({ where: { key: 'payment_admin_fee' } })).toBeNull()
+      expect((await updatePaymentSettings({ ...base, uniqueCodeMax: 100 })).uniqueCodeMax).toBe(100)
       expect((await updatePaymentSettings({ ...base, uniqueCodeMax: 999 })).uniqueCodeMax).toBe(999)
-      for (const max of [500, 599, 1000]) {
-        await expect(updatePaymentSettings({ ...base, uniqueCodeMax: max })).rejects.toThrow('Batas kode unik harus antara 600 dan 999.')
+      for (const max of [0, 99, 1000]) {
+        await expect(updatePaymentSettings({ ...base, uniqueCodeMax: max })).rejects.toThrow('Batas kode unik harus antara 100 dan 999.')
       }
     } finally {
       await prismaClient.systemSetting.deleteMany({ where: { key: 'payment_unique_code_max' } })
@@ -440,7 +473,7 @@ describe('kode unik 501..999 tanpa biaya admin (revisi client 2026-10-08)', () =
     const paid = await walkIn('10:00', '11:00')
     const open = await transactionOf(paid.transactionId)
     expect(open).toMatchObject({ paymentStatus: 'UNPAID', adminFee: 0, expiresAt: null })
-    expect(open.uniqueCode).toBeGreaterThan(500)
+    expect(open.uniqueCode).toBeLessThanOrEqual(500)
     expect(open.pendingTotal).toBe(open.amount + (open.uniqueCode as number))
 
     const decision = await approve(paid.transactionId, staffId)
